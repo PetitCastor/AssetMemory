@@ -1,0 +1,162 @@
+using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
+using System.Text.RegularExpressions;
+using AssetMemory.Core.Logs;
+
+namespace AssetMemory.Core.Inventory.Events;
+
+/// <summary>Turns a single <see cref="LogEntry"/> into one typed <see cref="InventoryEvent"/>, if it recognises it.</summary>
+public interface IInventoryEventParser
+{
+    bool TryParse(LogEntry entry, [NotNullWhen(true)] out InventoryEvent? ev);
+}
+
+internal static class FieldHelpers
+{
+    private static readonly Regex ForPlayerRegex = new(@"for '([^']+)'", RegexOptions.Compiled);
+
+    /// <summary>Player handle from a "Queued Request … for 'Name'" line.</summary>
+    public static string? PlayerFromFor(string message)
+    {
+        var m = ForPlayerRegex.Match(message);
+        return m.Success ? m.Groups[1].Value : null;
+    }
+
+    public static bool TryInt(string? text, out int value)
+        => int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
+
+    public static bool TryLong(string? text, out long value)
+        => long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
+}
+
+/// <summary>Parses a committed "Queued Request … Type[OpenNestedInventory]" line.</summary>
+public sealed class ContainerOpenedParser : IInventoryEventParser
+{
+    public bool TryParse(LogEntry entry, [NotNullWhen(true)] out InventoryEvent? ev)
+    {
+        ev = null;
+        if (entry.Category != "InventoryManagementRequest"
+            || !entry.Message.StartsWith("Queued Request", StringComparison.Ordinal)
+            || LogFields.Get(entry.Message, "Type") != "OpenNestedInventory")
+            return false;
+
+        if (!InventoryRef.TryParse(LogFields.Get(entry.Message, "Source Inventory"), out var container))
+            return false;
+        if (!FieldHelpers.TryInt(LogFields.Get(entry.Message, "Request"), out var requestId))
+            return false;
+
+        ev = new ContainerOpenedEvent(
+            entry.Timestamp,
+            FieldHelpers.PlayerFromFor(entry.Message) ?? "",
+            container,
+            LogFields.Get(entry.Message, "Source") ?? "",
+            requestId);
+        return true;
+    }
+}
+
+/// <summary>Parses a committed "Queued Request … Type[Move]" line — the source of item identity + quantity.</summary>
+public sealed class MoveEventParser : IInventoryEventParser
+{
+    public bool TryParse(LogEntry entry, [NotNullWhen(true)] out InventoryEvent? ev)
+    {
+        ev = null;
+        if (entry.Category != "InventoryManagementRequest"
+            || !entry.Message.StartsWith("Queued Request", StringComparison.Ordinal)
+            || LogFields.Get(entry.Message, "Type") != "Move")
+            return false;
+
+        var itemClass = LogFields.Get(entry.Message, "Source");
+        if (string.IsNullOrEmpty(itemClass))
+            return false;
+        if (!FieldHelpers.TryInt(LogFields.Get(entry.Message, "amount"), out var quantity))
+            return false;
+        if (!InventoryRef.TryParse(LogFields.Get(entry.Message, "Source Inventory"), out var source))
+            return false;
+        InventoryRef.TryParse(LogFields.Get(entry.Message, "Target Inventory"), out var target);
+        if (!FieldHelpers.TryInt(LogFields.Get(entry.Message, "Request"), out var requestId))
+            return false;
+
+        ev = new ItemMovedEvent(
+            entry.Timestamp,
+            FieldHelpers.PlayerFromFor(entry.Message) ?? "",
+            itemClass,
+            quantity,
+            source,
+            target,
+            requestId);
+        return true;
+    }
+}
+
+/// <summary>Parses a "&lt;GetGridItem&gt; … Number of Items[N] in Inventories[M]" line.</summary>
+public sealed class GridItemCountParser : IInventoryEventParser
+{
+    public bool TryParse(LogEntry entry, [NotNullWhen(true)] out InventoryEvent? ev)
+    {
+        ev = null;
+        if (entry.Category != "GetGridItem"
+            || !FieldHelpers.TryInt(LogFields.Get(entry.Message, "Number of Items"), out var stacks))
+            return false;
+
+        FieldHelpers.TryInt(LogFields.Get(entry.Message, "Request"), out var requestId);
+        FieldHelpers.TryInt(LogFields.Get(entry.Message, "Inventories"), out var inventoryCount);
+
+        ev = new GridItemCountEvent(entry.Timestamp, requestId, stacks, inventoryCount);
+        return true;
+    }
+}
+
+/// <summary>Parses an "&lt;AttachmentReceived&gt;" line into an equipped-loadout item.</summary>
+public sealed class EquippedItemParser : IInventoryEventParser
+{
+    public bool TryParse(LogEntry entry, [NotNullWhen(true)] out InventoryEvent? ev)
+    {
+        ev = null;
+        if (entry.Category != "AttachmentReceived")
+            return false;
+
+        var attachment = LogFields.Get(entry.Message, "Attachment");
+        if (string.IsNullOrEmpty(attachment))
+            return false;
+
+        // "instanceName, item_class, entityId"
+        var parts = attachment.Split(',', StringSplitOptions.TrimEntries);
+        if (parts.Length != 3 || !FieldHelpers.TryLong(parts[2], out var entityId))
+            return false;
+
+        ev = new EquippedItemEvent(
+            entry.Timestamp,
+            LogFields.Get(entry.Message, "Player") ?? "",
+            parts[1],
+            parts[0],
+            entityId,
+            LogFields.Get(entry.Message, "Port") ?? "",
+            LogFields.Get(entry.Message, "Status") ?? "");
+        return true;
+    }
+}
+
+/// <summary>Parses a "&lt;Remove Inventory Container UI&gt; … inventory [ref] removed from UI" line.</summary>
+public sealed partial class ContainerClosedParser : IInventoryEventParser
+{
+    [GeneratedRegex(@"inventory \[([^\]]+)\] removed", RegexOptions.Compiled)]
+    private static partial Regex ClosedRefRegex();
+
+    public bool TryParse(LogEntry entry, [NotNullWhen(true)] out InventoryEvent? ev)
+    {
+        ev = null;
+        if (entry.Category != "Remove Inventory Container UI")
+            return false;
+
+        var m = ClosedRefRegex().Match(entry.Message);
+        if (!m.Success || !InventoryRef.TryParse(m.Groups[1].Value, out var container))
+            return false;
+
+        ev = new ContainerClosedEvent(
+            entry.Timestamp,
+            LogFields.Get(entry.Message, "Player") ?? "",
+            container);
+        return true;
+    }
+}

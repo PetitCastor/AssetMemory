@@ -1,0 +1,356 @@
+@page "/"
+@rendermode InteractiveServer
+@using AssetMemory.Collector
+@using AssetMemory.Data
+@using AssetMemory.Core.Detection
+@using AssetMemory.UI.Services
+@inject AssetMemoryStore Store
+@inject AppSettings Settings
+@inject LogTailer Tailer
+@inject SyncService SyncSvc
+@inject IJSRuntime JS
+
+<PageTitle>AssetMemory</PageTitle>
+
+<div class="inventory-container">
+    <header class="inventory-header">
+        <div>
+            <h1>AssetMemory</h1>
+            <span class="subtitle">Star Citizen inventory tracker</span>
+        </div>
+        <button class="theme-btn" @onclick="ToggleTheme" title="Toggle dark/light mode">
+            @if (_theme == "dark")
+            {
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+            }
+            else
+            {
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+            }
+        </button>
+    </header>
+
+    @if (string.IsNullOrEmpty(Settings.GameLogPath))
+    {
+        <div class="setup-card">
+            <h2>Welcome</h2>
+            <p>AssetMemory needs to know where Star Citizen is installed to start tracking your inventory.</p>
+
+            <button class="btn-primary" @onclick="AutoDetect">Auto-detect</button>
+
+            <div class="setup-divider"><span>or enter the path manually</span></div>
+
+            <div class="setup-input-row">
+                <input type="text" @bind="PathInput" placeholder="E:\Games\StarCitizen" class="setup-input" />
+                <button class="btn-primary" @onclick="ApplyPath">Set</button>
+            </div>
+
+            <p class="setup-hint">Point to your StarCitizen folder (containing LIVE, PTU, or EPTU).</p>
+
+            @if (_pathError is not null)
+            {
+                <p class="setup-error">@_pathError</p>
+            }
+        </div>
+    }
+    else
+    {
+        @if (_editingPath)
+        {
+            <div class="path-editor">
+                <input type="text" @bind="PathInput" placeholder="E:\Games\StarCitizen" class="setup-input" />
+                <button class="btn-primary btn-sm" @onclick="ApplyPath">Save</button>
+                <button class="btn-secondary btn-sm" @onclick="() => { _editingPath = false; _pathError = null; }">Cancel</button>
+                @if (_pathError is not null)
+                {
+                    <span class="setup-error">@_pathError</span>
+                }
+            </div>
+        }
+
+        <div class="toolbar">
+            <div class="filter-group">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                <select @bind="SelectedLocation">
+                    <option value="">All locations</option>
+                    @foreach (var loc in Locations)
+                    {
+                        <option value="@loc.Id">@(loc.Label ?? $"Location {loc.Id}")</option>
+                    }
+                </select>
+            </div>
+            <div class="filter-group search">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                <input type="text" placeholder="Search items..." @bind="SearchTerm" @bind:event="oninput" />
+                @if (!string.IsNullOrEmpty(SearchTerm))
+                {
+                    <button class="clear-btn" @onclick="() => SearchTerm = string.Empty" title="Clear">&times;</button>
+                }
+            </div>
+            <button class="refresh-btn" @onclick="LoadData" title="Refresh">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+            </button>
+        </div>
+
+        <div class="table-wrapper">
+            <table>
+                <thead>
+                    <tr>
+                        <th class="sortable" @onclick='() => ToggleSort("item")'>
+                            Item
+                            @if (SortColumn == "item") { <span class="sort-arrow">@(SortAsc ? "▲" : "▼")</span> }
+                        </th>
+                        <th class="sortable" @onclick='() => ToggleSort("location")'>
+                            Location
+                            @if (SortColumn == "location") { <span class="sort-arrow">@(SortAsc ? "▲" : "▼")</span> }
+                        </th>
+                        <th class="sortable num" @onclick='() => ToggleSort("qty")'>
+                            Qty
+                            @if (SortColumn == "qty") { <span class="sort-arrow">@(SortAsc ? "▲" : "▼")</span> }
+                        </th>
+                        <th class="sortable num" @onclick='() => ToggleSort("seen")'>
+                            Last seen
+                            @if (SortColumn == "seen") { <span class="sort-arrow">@(SortAsc ? "▲" : "▼")</span> }
+                        </th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (!FilteredRows.Any())
+                    {
+                        <tr>
+                            <td colspan="4" class="empty-state">
+                                @if (AllRows.Count == 0)
+                                {
+                                    <span>No inventory data yet. Play Star Citizen and open your inventory to start collecting.</span>
+                                }
+                                else
+                                {
+                                    <span>No items match your filters.</span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                    else
+                    {
+                        @foreach (var row in FilteredRows)
+                        {
+                            <tr>
+                                <td>@(row.ItemDisplayName ?? row.ItemClassName)</td>
+                                <td class="@(row.LocationLabel is null ? "location-id" : "")">@(row.LocationLabel ?? $"Location {row.LocationId}")</td>
+                                <td class="num">@row.Quantity</td>
+                                <td class="num muted">@FormatTimeAgo(row.LastSeenUtc)</td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <footer class="table-footer">
+            <span>@FilteredRows.Count() rows across @FilteredRows.Select(r => r.LocationId).Distinct().Count() locations</span>
+            <span>@FilteredRows.Sum(r => r.Quantity) units total</span>
+        </footer>
+
+        <div class="status-bar">
+            <div class="status-left">
+                <span class="status-dot active"></span>
+                <span>Watching @ChannelName</span>
+                <span class="status-path" title="@Settings.GameLogPath">@Settings.GameLogPath</span>
+                <button class="edit-path-btn" @onclick="StartEditPath" title="Change game folder">
+                    <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                </button>
+            </div>
+            <button class="sync-btn" @onclick="RunSync" disabled="@SyncSvc.IsSyncing">
+                @if (SyncSvc.IsSyncing)
+                {
+                    <span>Syncing...</span>
+                }
+                else
+                {
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><polyline points="23 20 23 14 17 14"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>
+                    <span>Sync backups</span>
+                }
+            </button>
+        </div>
+
+        @if (_syncMessage is not null)
+        {
+            <div class="sync-result">@_syncMessage</div>
+        }
+    }
+</div>
+
+@code {
+    private List<HoldingDetail> AllRows = [];
+    private List<LocationSummary> Locations = [];
+
+    private string SearchTerm { get; set; } = "";
+    private string SelectedLocation { get; set; } = "";
+    private string SortColumn { get; set; } = "item";
+    private bool SortAsc { get; set; } = true;
+    private string _theme = "dark";
+    private string? _syncMessage;
+    private string PathInput { get; set; } = "";
+    private string? _pathError;
+    private bool _editingPath;
+
+    private string ChannelName =>
+        Path.GetFileName(Path.GetDirectoryName(Settings.GameLogPath ?? "") ?? "");
+
+    protected override void OnInitialized()
+    {
+        if (!string.IsNullOrEmpty(Settings.GameLogPath))
+            LoadData();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            var saved = await JS.InvokeAsync<string?>("getTheme");
+            if (saved is not null)
+            {
+                _theme = saved;
+                StateHasChanged();
+            }
+        }
+    }
+
+    private async Task ToggleTheme()
+    {
+        _theme = _theme == "dark" ? "light" : "dark";
+        await JS.InvokeVoidAsync("localStorage.setItem", "theme", _theme);
+        await JS.InvokeVoidAsync("setTheme", _theme);
+    }
+
+    private void AutoDetect()
+    {
+        var found = GamePathFinder.FindGameLogPaths();
+        if (found.Count > 0)
+        {
+            SetGameLogPath(found[0]);
+            _pathError = null;
+        }
+        else
+        {
+            _pathError = "Could not find Game.log. Enter the path manually.";
+        }
+    }
+
+    private void ApplyPath()
+    {
+        if (string.IsNullOrWhiteSpace(PathInput))
+        {
+            _pathError = "Please enter a path.";
+            return;
+        }
+
+        var resolved = GamePathFinder.FindGameLogInFolder(PathInput.Trim());
+        if (resolved is null && GamePathFinder.IsValidGameLog(PathInput.Trim()))
+            resolved = Path.GetFullPath(PathInput.Trim());
+
+        if (resolved is null)
+        {
+            _pathError = "Game.log not found at that location. Check the path and try again.";
+            return;
+        }
+
+        SetGameLogPath(resolved);
+        _pathError = null;
+        _editingPath = false;
+    }
+
+    private void SetGameLogPath(string path)
+    {
+        Settings.GameLogPath = path;
+        Settings.Save(Path.Combine(AppContext.BaseDirectory, "settings.json"));
+        Tailer.SetPath(path);
+        LoadData();
+    }
+
+    private void StartEditPath()
+    {
+        var current = Settings.GameLogPath ?? "";
+        PathInput = Path.GetDirectoryName(Path.GetDirectoryName(current) ?? "") ?? current;
+        _editingPath = true;
+        _pathError = null;
+    }
+
+    private void RunSync()
+    {
+        var result = SyncSvc.Sync();
+        _syncMessage = result.Message;
+        LoadData();
+    }
+
+    private void LoadData()
+    {
+        AllRows = Store.GetAllHoldingDetails().ToList();
+        Locations = AllRows
+            .GroupBy(r => r.LocationId)
+            .Select(g => new LocationSummary(g.Key, g.First().LocationLabel))
+            .OrderBy(l => l.Label ?? $"zzz{l.Id}")
+            .ToList();
+    }
+
+    private IEnumerable<HoldingDetail> FilteredRows
+    {
+        get
+        {
+            IEnumerable<HoldingDetail> rows = AllRows;
+
+            if (long.TryParse(SelectedLocation, out var locId))
+                rows = rows.Where(r => r.LocationId == locId);
+
+            if (!string.IsNullOrWhiteSpace(SearchTerm))
+            {
+                var term = SearchTerm.Trim();
+                rows = rows.Where(r =>
+                    (r.ItemDisplayName?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                    r.ItemClassName.Contains(term, StringComparison.OrdinalIgnoreCase));
+            }
+
+            rows = SortColumn switch
+            {
+                "item" => SortAsc
+                    ? rows.OrderBy(r => r.ItemDisplayName ?? r.ItemClassName, StringComparer.OrdinalIgnoreCase)
+                    : rows.OrderByDescending(r => r.ItemDisplayName ?? r.ItemClassName, StringComparer.OrdinalIgnoreCase),
+                "location" => SortAsc
+                    ? rows.OrderBy(r => r.LocationLabel ?? $"zzz{r.LocationId}", StringComparer.OrdinalIgnoreCase)
+                    : rows.OrderByDescending(r => r.LocationLabel ?? $"zzz{r.LocationId}", StringComparer.OrdinalIgnoreCase),
+                "qty" => SortAsc
+                    ? rows.OrderBy(r => r.Quantity)
+                    : rows.OrderByDescending(r => r.Quantity),
+                "seen" => SortAsc
+                    ? rows.OrderBy(r => r.LastSeenUtc)
+                    : rows.OrderByDescending(r => r.LastSeenUtc),
+                _ => rows
+            };
+
+            return rows;
+        }
+    }
+
+    private void ToggleSort(string column)
+    {
+        if (SortColumn == column)
+            SortAsc = !SortAsc;
+        else
+        {
+            SortColumn = column;
+            SortAsc = true;
+        }
+    }
+
+    private static string FormatTimeAgo(DateTimeOffset utc)
+    {
+        var diff = DateTimeOffset.UtcNow - utc;
+        if (diff.TotalMinutes < 1) return "just now";
+        if (diff.TotalMinutes < 60) return $"{(int)diff.TotalMinutes}m ago";
+        if (diff.TotalHours < 24) return $"{(int)diff.TotalHours}h ago";
+        if (diff.TotalDays < 30) return $"{(int)diff.TotalDays}d ago";
+        return utc.ToString("yyyy-MM-dd");
+    }
+
+    private record LocationSummary(long Id, string? Label);
+}

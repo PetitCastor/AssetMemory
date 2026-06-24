@@ -1,0 +1,139 @@
+using AssetMemory.Core.Inventory;
+using AssetMemory.Core.Inventory.Events;
+using AssetMemory.Core.Logs;
+
+namespace AssetMemory.Core.Tests.Inventory.Events;
+
+public class EventParserTests
+{
+    private static LogEntry Entry(string line)
+    {
+        Assert.True(LogEntryParser.TryParse(line, out var entry), $"line did not parse: {line}");
+        return entry!;
+    }
+
+    // ---------- ContainerOpenedParser ----------
+
+    private const string OpenLine =
+        "<2026-06-24T19:22:39.830Z> [Notice] <InventoryManagementRequest> Queued Request[22] Type[OpenNestedInventory] for 'Arcadiius' [204821708183] Source Inventory[204821708183:Location:2900774186] Target Inventory[INVALID]. Source[Carryable_TBO_InventoryContainer_2SCU] amount[0] rank[amqgytfwbdhfn]. Target[NULL] amount[0] rank[]. Item[NONE] action[None]. RequestInProgress[0] CurrentProcess[] [Team_CoreGameplayFeatures][Inventory]";
+
+    [Fact]
+    public void Open_parses_to_container_opened_event()
+    {
+        Assert.True(new ContainerOpenedParser().TryParse(Entry(OpenLine), out var ev));
+        var opened = Assert.IsType<ContainerOpenedEvent>(ev);
+        Assert.Equal("Arcadiius", opened.Player);
+        Assert.Equal(InventoryKind.Location, opened.Container.Kind);
+        Assert.Equal(2900774186, opened.Container.Id);
+        Assert.Equal("Carryable_TBO_InventoryContainer_2SCU", opened.ContainerClass);
+        Assert.Equal(22, opened.RequestId);
+    }
+
+    [Fact]
+    public void Open_ignores_the_uncommitted_new_request_line()
+    {
+        const string newReq =
+            "<2026-06-24T19:22:39.827Z> [Notice] <InventoryManagement> New request[22] Player[Arcadiius] Type[OpenNestedInventory] SourceInventory[204821708183:Location:2900774186] TargetInventory[INVALID] ItemClass[] [Team_CoreGameplayFeatures][Inventory]";
+        Assert.False(new ContainerOpenedParser().TryParse(Entry(newReq), out _));
+    }
+
+    [Fact]
+    public void Open_ignores_a_move_queued_line()
+    {
+        Assert.False(new ContainerOpenedParser().TryParse(Entry(MoveLine), out _));
+    }
+
+    // ---------- MoveEventParser ----------
+
+    private const string MoveLine =
+        "<2026-06-24T19:23:30.687Z> [Notice] <InventoryManagementRequest> Queued Request[26] Type[Move] for 'Arcadiius' [204821708183] Source Inventory[601563981557:Container:0] Target Inventory[595318982158:Container:0]. Source[Drink_bottle_synergy_01_plus_a] amount[2] rank[amqgytlzrhqzn]. Target[NULL] amount[0] rank[amqgqqzvfhycz]. Item[NONE] action[None]. RequestInProgress[0] CurrentProcess[] [Team_CoreGameplayFeatures][Inventory]";
+
+    [Fact]
+    public void Move_parses_item_class_and_quantity()
+    {
+        Assert.True(new MoveEventParser().TryParse(Entry(MoveLine), out var ev));
+        var moved = Assert.IsType<ItemMovedEvent>(ev);
+        Assert.Equal("Drink_bottle_synergy_01_plus_a", moved.ItemClass);
+        Assert.Equal(2, moved.Quantity);
+    }
+
+    [Fact]
+    public void Move_parses_source_and_target_inventories()
+    {
+        Assert.True(new MoveEventParser().TryParse(Entry(MoveLine), out var ev));
+        var moved = (ItemMovedEvent)ev!;
+        Assert.Equal(601563981557, moved.Source.Owner);
+        Assert.Equal(InventoryKind.Container, moved.Source.Kind);
+        Assert.Equal(595318982158, moved.Target.Owner);
+        Assert.Equal("Arcadiius", moved.Player);
+        Assert.Equal(26, moved.RequestId);
+    }
+
+    [Fact]
+    public void Move_ignores_an_open_line()
+    {
+        Assert.False(new MoveEventParser().TryParse(Entry(OpenLine), out _));
+    }
+
+    // ---------- GridItemCountParser ----------
+
+    [Fact]
+    public void Grid_parses_stack_and_inventory_counts()
+    {
+        const string line =
+            "<2026-06-24T19:22:39.830Z> [Notice] <GetGridItem> Request[16] Number of Items[1] in Inventories[1] [Team_CoreGameplayFeatures][Inventory]";
+        Assert.True(new GridItemCountParser().TryParse(Entry(line), out var ev));
+        var grid = Assert.IsType<GridItemCountEvent>(ev);
+        Assert.Equal(16, grid.RequestId);
+        Assert.Equal(1, grid.StackCount);
+        Assert.Equal(1, grid.InventoryCount);
+    }
+
+    [Fact]
+    public void Grid_ignores_the_succeeded_line()
+    {
+        const string line =
+            "<2026-06-24T19:22:39.875Z> [Notice] <GetGridItem> Request[16] request succeeded. [Team_CoreGameplayFeatures][Inventory]";
+        Assert.False(new GridItemCountParser().TryParse(Entry(line), out _));
+    }
+
+    // ---------- EquippedItemParser ----------
+
+    [Fact]
+    public void Equipped_parses_attachment_triplet_and_port()
+    {
+        const string line =
+            "<2026-06-24T18:46:21.085Z> [Notice] <AttachmentReceived> Player[Arcadiius] Attachment[rsi_odyssey_undersuit_01_01_01_200000000217, rsi_odyssey_undersuit_01_01_01, 200000000217] Status[persistent] Port[Armor_Undersuit] Elapsed[26.766226] [Team_CoreGameplayFeatures][Inventory]";
+        Assert.True(new EquippedItemParser().TryParse(Entry(line), out var ev));
+        var eq = Assert.IsType<EquippedItemEvent>(ev);
+        Assert.Equal("Arcadiius", eq.Player);
+        Assert.Equal("rsi_odyssey_undersuit_01_01_01", eq.ItemClass);
+        Assert.Equal("rsi_odyssey_undersuit_01_01_01_200000000217", eq.InstanceName);
+        Assert.Equal(200000000217, eq.EntityId);
+        Assert.Equal("Armor_Undersuit", eq.Port);
+        Assert.Equal("persistent", eq.Status);
+    }
+
+    // ---------- ContainerClosedParser ----------
+
+    [Fact]
+    public void Closed_parses_container_ref()
+    {
+        const string line =
+            "<2026-06-24T19:23:50.563Z> [Notice] <Remove Inventory Container UI> Player[Arcadiius] inventory [204821708183:Location:2900774186] removed from UI [Team_CoreGameplayFeatures][Inventory]";
+        Assert.True(new ContainerClosedParser().TryParse(Entry(line), out var ev));
+        var closed = Assert.IsType<ContainerClosedEvent>(ev);
+        Assert.Equal("Arcadiius", closed.Player);
+        Assert.Equal(2900774186, closed.Container.Id);
+        Assert.Equal(InventoryKind.Location, closed.Container.Kind);
+    }
+
+    [Fact]
+    public void Closed_ignores_client_only_is_still_a_valid_ref()
+    {
+        const string line =
+            "<2026-06-24T19:23:50.563Z> [Notice] <Remove Inventory Container UI> Player[Arcadiius] inventory [0:ClientOnly:1] removed from UI [Team_CoreGameplayFeatures][Inventory]";
+        Assert.True(new ContainerClosedParser().TryParse(Entry(line), out var ev));
+        Assert.Equal(InventoryKind.ClientOnly, ((ContainerClosedEvent)ev!).Container.Kind);
+    }
+}
