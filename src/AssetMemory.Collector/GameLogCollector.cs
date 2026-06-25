@@ -13,6 +13,7 @@ public sealed class GameLogCollector
     private readonly LogTailer _tailer;
     private readonly EventApplier _applier;
     private readonly InventoryLogReader _reader;
+    private readonly Lock _lock = new();
 
     public GameLogCollector(LogTailer tailer, EventApplier applier, InventoryLogReader? reader = null)
     {
@@ -24,24 +25,32 @@ public sealed class GameLogCollector
     /// <returns>Number of inventory events applied this tick.</returns>
     public int Tick()
     {
-        var count = 0;
-        foreach (var ev in _reader.Read(_tailer.ReadNew()))
+        // Guards against the background poll loop and a manual ProcessFile sync racing
+        // on the same underlying SQLite connection (SqliteConnection isn't thread-safe).
+        lock (_lock)
         {
-            _applier.Apply(ev);
-            count++;
+            var count = 0;
+            foreach (var ev in _reader.Read(_tailer.ReadNew()))
+            {
+                _applier.Apply(ev);
+                count++;
+            }
+            return count;
         }
-        return count;
     }
 
     public int ProcessFile(string path)
     {
-        var count = 0;
-        foreach (var ev in _reader.Read(ReadLinesShared(path)))
+        lock (_lock)
         {
-            _applier.Apply(ev);
-            count++;
+            var count = 0;
+            foreach (var ev in _reader.Read(ReadLinesShared(path)))
+            {
+                _applier.Apply(ev);
+                count++;
+            }
+            return count;
         }
-        return count;
     }
 
     private static IEnumerable<string> ReadLinesShared(string path)

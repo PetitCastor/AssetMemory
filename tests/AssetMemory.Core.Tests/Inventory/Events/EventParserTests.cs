@@ -136,4 +136,36 @@ public class EventParserTests
         Assert.True(new ContainerClosedParser().TryParse(Entry(line), out var ev));
         Assert.Equal(InventoryKind.ClientOnly, ((ContainerClosedEvent)ev!).Container.Kind);
     }
+
+    // ---------- PlayerIdentityParser ----------
+
+    [Fact]
+    public void PlayerIdentity_parses_name_and_geid_from_an_inventory_management_result_line()
+    {
+        const string line =
+            "<2026-03-05T20:54:45.953Z> [Notice] <InventoryManagement> Request[141] for 'Arrogant' [200146296252] Result[Succeed] Item[9582211815985] CanLockQueue[Yes]. [Team_CoreGameplayFeatures][Inventory]";
+        Assert.True(new PlayerIdentityParser().TryParse(Entry(line), out var ev));
+        var id = Assert.IsType<PlayerIdentityEvent>(ev);
+        Assert.Equal("Arrogant", id.Player);
+        Assert.Equal(200146296252, id.Geid);
+    }
+
+    [Fact]
+    public void PlayerIdentity_parses_name_and_geid_from_an_unstow_finalized_line()
+    {
+        const string line =
+            "<2026-03-05T20:54:45.953Z> [Notice] <UnstowPendingEntities> Unstow Request[141] for 'Arrogant' [200146296252] finalized spawn of 'qrt_utility_heavy_legs_01_01_12_9582211815985' [9582211815985], 0 remaining [Team_CoreGameplayFeatures][Inventory]";
+        Assert.True(new PlayerIdentityParser().TryParse(Entry(line), out var ev));
+        var id = Assert.IsType<PlayerIdentityEvent>(ev);
+        Assert.Equal("Arrogant", id.Player);
+        Assert.Equal(200146296252, id.Geid);
+    }
+
+    [Fact]
+    public void PlayerIdentity_ignores_lines_without_a_bracketed_geid()
+    {
+        const string line =
+            "<2026-06-24T19:23:50.563Z> [Notice] <Close Inventory Grid> Player[Arcadiius] closing inventory in progress... [Team_CoreGameplayFeatures][Inventory]";
+        Assert.False(new PlayerIdentityParser().TryParse(Entry(line), out _));
+    }
 }

@@ -169,6 +169,57 @@ public class EventApplierTests
     }
 
     [Fact]
+    public void Equipped_labels_its_own_container_location_from_the_item_name()
+    {
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            ApplierFor(store).Apply(new EquippedItemEvent(
+                T0, "Arcadiius",
+                ItemClass: "grin_utility_medium_legs_01_01_04",
+                InstanceName: "grin_utility_medium_legs_01_01_04_9454043707556",
+                EntityId: 9454043707556,
+                Port: "Armor_Legs",
+                Status: "persistent"));
+
+            var loc = store.GetLocation(9454043707556)!;
+            Assert.Equal("Grin utility medium legs 01 01 04 (worn)", loc.Label);
+        }
+    }
+
+    [Fact]
+    public void PlayerIdentity_labels_the_players_own_location_with_their_name()
+    {
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            ApplierFor(store).Apply(new PlayerIdentityEvent(T0, "Arrogant", 200146296252));
+
+            Assert.Equal("Arrogant", store.GetLocation(200146296252)!.Label);
+        }
+    }
+
+    [Fact]
+    public void PlayerIdentity_label_survives_a_later_move_through_that_location()
+    {
+        // Moves always upsert their endpoints with label: null — confirms that doesn't clobber
+        // a name already learned for the player's GEID-keyed personal inventory location.
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            var applier = ApplierFor(store);
+            applier.Apply(new PlayerIdentityEvent(T0, "Arrogant", 200146296252));
+            applier.Apply(new ItemMovedEvent(T0.AddSeconds(1),
+                "Arrogant", "foo", 1,
+                new InventoryRef(200146296252, InventoryKind.Location, 0, "200146296252:Location:0"),
+                new InventoryRef(11, InventoryKind.Container, 0, "11:Container:0"),
+                1));
+
+            Assert.Equal("Arrogant", store.GetLocation(200146296252)!.Label);
+        }
+    }
+
+    [Fact]
     public void GridItemCount_is_ignored_without_error()
     {
         var (store, conn) = TestStore.CreateMigrated();

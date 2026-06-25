@@ -29,6 +29,7 @@ public sealed class EventApplier
             case EquippedItemEvent eq: ApplyEquipped(eq); break;
             case ContainerOpenedEvent open: ApplyOpened(open); break;
             case ContainerClosedEvent close: ApplyClosed(close); break;
+            case PlayerIdentityEvent id: ApplyPlayerIdentity(id); break;
             case GridItemCountEvent: /* no-op — purely a UI hint, no identity */ break;
         }
 
@@ -48,10 +49,15 @@ public sealed class EventApplier
 
     private void ApplyEquipped(EquippedItemEvent eq)
     {
-        var itemId = _store.EnsureItem(eq.ItemClass, _names.Resolve(eq.ItemClass));
+        var displayName = _names.Resolve(eq.ItemClass);
+        var itemId = _store.EnsureItem(eq.ItemClass, displayName);
         _store.UpsertEquipped(
             eq.Player, eq.Port, itemId, eq.EntityId,
             eq.InstanceName, eq.Status, eq.Timestamp);
+
+        // The worn item is itself a container (e.g. armor with pockets) — its entity id
+        // is the same id moves use as the owning location, so label it from the item name.
+        _store.UpsertLocation(eq.EntityId, eq.Timestamp, label: $"{displayName} (worn)");
     }
 
     private void ApplyOpened(ContainerOpenedEvent open)
@@ -59,4 +65,13 @@ public sealed class EventApplier
 
     private void ApplyClosed(ContainerClosedEvent close)
         => _store.UpsertLocation(close.Container.Id, close.Timestamp, label: null);
+
+    private void ApplyPlayerIdentity(PlayerIdentityEvent id)
+    {
+        if (string.IsNullOrEmpty(id.Player))
+            return;
+
+        // A player's GEID doubles as the location id for their own personal inventory.
+        _store.UpsertLocation(id.Geid, id.Timestamp, label: id.Player);
+    }
 }

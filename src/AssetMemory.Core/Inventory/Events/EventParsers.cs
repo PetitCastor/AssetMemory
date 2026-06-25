@@ -160,3 +160,26 @@ public sealed partial class ContainerClosedParser : IInventoryEventParser
         return true;
     }
 }
+
+/// <summary>
+/// Catch-all: any log line of any category carrying the common "for 'Name' [geid]" pattern.
+/// Learns a player's display name for their GEID so their personal inventory location (which
+/// uses the GEID as its location id) can be auto-labelled instead of showing a raw number.
+/// Registered last so more specific parsers above claim their lines first.
+/// </summary>
+public sealed partial class PlayerIdentityParser : IInventoryEventParser
+{
+    [GeneratedRegex(@"for '([^']+)' \[(\d+)\]", RegexOptions.Compiled)]
+    private static partial Regex PlayerGeidRegex();
+
+    public bool TryParse(LogEntry entry, [NotNullWhen(true)] out InventoryEvent? ev)
+    {
+        ev = null;
+        var m = PlayerGeidRegex().Match(entry.Message);
+        if (!m.Success || !FieldHelpers.TryLong(m.Groups[2].Value, out var geid))
+            return false;
+
+        ev = new PlayerIdentityEvent(entry.Timestamp, m.Groups[1].Value, geid);
+        return true;
+    }
+}

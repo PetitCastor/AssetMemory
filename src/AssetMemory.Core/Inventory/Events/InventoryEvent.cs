@@ -43,3 +43,9 @@ public sealed record EquippedItemEvent(
     long EntityId,
     string Port,
     string Status) : InventoryEvent(Timestamp);
+
+/// <summary>A player handle observed alongside their GEID — used to label their personal inventory location.</summary>
+public sealed record PlayerIdentityEvent(
+    DateTimeOffset Timestamp,
+    string Player,
+    long Geid) : InventoryEvent(Timestamp);

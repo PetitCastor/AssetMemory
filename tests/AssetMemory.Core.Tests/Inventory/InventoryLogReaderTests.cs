@@ -39,8 +39,10 @@ public class InventoryLogReaderTests
 
         var events = reader.Read(File.ReadLines(Fixture("synergy-box-session.log"))).ToList();
 
-        // open, grid-count, move-out, move-back, close — noise lines filtered out.
+        // player-identity (from the "Attempting queuing" line), open, grid-count,
+        // move-out, move-back, close — remaining noise lines filtered out.
         Assert.Collection(events,
+            e => Assert.IsType<PlayerIdentityEvent>(e),
             e => Assert.IsType<ContainerOpenedEvent>(e),
             e => Assert.IsType<GridItemCountEvent>(e),
             e => Assert.IsType<ItemMovedEvent>(e),

@@ -27,6 +27,7 @@ public sealed class InventoryEventParser
         new GridItemCountParser(),
         new EquippedItemParser(),
         new ContainerClosedParser(),
+        new PlayerIdentityParser(),
     ];
 
     public bool TryParse(LogEntry entry, [NotNullWhen(true)] out InventoryEvent? ev)
