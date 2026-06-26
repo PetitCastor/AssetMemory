@@ -45,10 +45,15 @@ builder.Services.AddSingleton(settings);
 
 // Collector pipeline — always registered; LogTailer gracefully no-ops when path is empty
 builder.Services.AddSingleton(_ => new LogTailer(settings.GameLogPath ?? ""));
-builder.Services.AddSingleton<IItemNameResolver, ItemNameResolver>();
+// Real item display names come from the game's loose localization file (global.ini) next to
+// the configured Game.log; falls back to the heuristic formatter when it can't be found.
+builder.Services.AddSingleton<IItemNameResolver>(_ =>
+    new ItemNameResolver(GameItemNames.LoadForGameLog(settings.GameLogPath)));
+builder.Services.AddSingleton<IStationNameResolver, StationNameResolver>();
 builder.Services.AddSingleton(sp => new EventApplier(
     sp.GetRequiredService<AssetMemoryStore>(),
-    sp.GetRequiredService<IItemNameResolver>()));
+    sp.GetRequiredService<IItemNameResolver>(),
+    sp.GetRequiredService<IStationNameResolver>()));
 builder.Services.AddSingleton(sp => new GameLogCollector(
     sp.GetRequiredService<LogTailer>(),
     sp.GetRequiredService<EventApplier>()));
@@ -69,8 +74,12 @@ builder.WebHost.ConfigureKestrel(k =>
 
 var app = builder.Build();
 
-// Eagerly initialize the store
-app.Services.GetRequiredService<AssetMemoryStore>();
+// Eagerly initialize the store, then backfill display names for items already captured before
+// the localization map was wired in. Runs before the collector starts, so no connection race.
+var store = app.Services.GetRequiredService<AssetMemoryStore>();
+var itemNames = app.Services.GetRequiredService<IItemNameResolver>();
+foreach (var item in store.GetAllItems())
+    store.EnsureItem(item.ClassName, itemNames.Resolve(item.ClassName));
 
 if (!app.Environment.IsDevelopment())
 {

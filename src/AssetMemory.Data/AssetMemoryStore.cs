@@ -129,6 +129,17 @@ public sealed class AssetMemoryStore
             : null;
     }
 
+    public IEnumerable<ItemRow> GetAllItems()
+    {
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = "SELECT id, class_name, display_name FROM items;";
+        using var r = cmd.ExecuteReader();
+        var list = new List<ItemRow>();
+        while (r.Read())
+            list.Add(new ItemRow(r.GetInt64(0), r.GetString(1), r.IsDBNull(2) ? null : r.GetString(2)));
+        return list;
+    }
+
     // -------- holdings --------
 
     public void AdjustHolding(long locationId, long itemId, int delta, DateTimeOffset atUtc)
