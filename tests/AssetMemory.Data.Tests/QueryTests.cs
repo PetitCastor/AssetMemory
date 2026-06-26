@@ -389,4 +389,46 @@ public class QueryTests
             Assert.Empty(store.GetEquippedDetails("nobody"));
         }
     }
+
+    // ---------- ClearAll ----------
+
+    [Fact]
+    public void ClearAll_removes_all_holdings_items_locations_equipped_and_audit()
+    {
+        var (store, conn) = Seeded();
+        using (conn)
+        {
+            var itemId = store.EnsureItem("helmet_x", "Helmet X");
+            store.UpsertEquipped("Arcadiius", "Armor_Helmet", itemId, 999, "helmet_x_1", "persistent", T0);
+            store.RecordAudit(T0, "TestEvent", "{}");
+
+            store.ClearAll();
+
+            Assert.Empty(store.GetAllHoldingDetails());
+            Assert.Empty(store.GetAllItems());
+            Assert.Empty(store.GetEquippedDetails("Arcadiius"));
+            Assert.Empty(store.ReadAudit());
+            Assert.Null(store.GetLocation(100));
+            Assert.Null(store.GetLocation(200));
+        }
+    }
+
+    [Fact]
+    public void ClearAll_allows_reinserting_data_after_clearing()
+    {
+        var (store, conn) = Seeded();
+        using (conn)
+        {
+            store.ClearAll();
+
+            store.UpsertLocation(1, T0, "Fresh Location");
+            var itemId = store.EnsureItem("new_item", "New Item");
+            store.AdjustHolding(1, itemId, 3, T0);
+
+            var holdings = store.GetAllHoldingDetails().ToList();
+            Assert.Single(holdings);
+            Assert.Equal("New Item", holdings[0].ItemDisplayName);
+            Assert.Equal(3, holdings[0].Quantity);
+        }
+    }
 }

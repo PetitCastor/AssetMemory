@@ -15,6 +15,8 @@ public sealed class GameLogCollector
     private readonly InventoryLogReader _reader;
     private readonly Lock _lock = new();
 
+    public bool HasCompletedFirstTick { get; private set; }
+
     public GameLogCollector(LogTailer tailer, EventApplier applier, InventoryLogReader? reader = null)
     {
         _tailer = tailer ?? throw new ArgumentNullException(nameof(tailer));
@@ -25,11 +27,20 @@ public sealed class GameLogCollector
     /// <returns>Number of inventory events applied this tick.</returns>
     public int Tick()
     {
-        // Guards against the background poll loop and a manual ProcessFile sync racing
-        // on the same underlying SQLite connection (SqliteConnection isn't thread-safe).
         lock (_lock)
         {
-            return _applier.ApplyBatch(_reader.Read(_tailer.ReadNew()));
+            var count = _applier.ApplyBatch(_reader.Read(_tailer.ReadNew()));
+            HasCompletedFirstTick = true;
+            return count;
+        }
+    }
+
+    public void StartFresh(Action clearData)
+    {
+        lock (_lock)
+        {
+            clearData();
+            _tailer.SeekToEnd();
         }
     }
 

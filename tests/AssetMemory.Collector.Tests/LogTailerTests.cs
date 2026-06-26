@@ -112,6 +112,30 @@ public class LogTailerTests
     }
 
     [Fact]
+    public void SeekToEnd_skips_existing_content_and_only_reads_new_lines()
+    {
+        using var log = new TempLog();
+        log.Append("old-1", "old-2", "old-3");
+
+        using var tailer = new LogTailer(log.Path);
+        tailer.SeekToEnd();
+
+        Assert.Empty(tailer.ReadNew());
+
+        log.Append("new-1", "new-2");
+        Assert.Equal(["new-1", "new-2"], tailer.ReadNew());
+    }
+
+    [Fact]
+    public void SeekToEnd_on_missing_file_is_a_no_op()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"assetmemory-missing-{Guid.NewGuid():N}.log");
+        using var tailer = new LogTailer(path);
+        tailer.SeekToEnd();
+        Assert.Equal(0, tailer.Position);
+    }
+
+    [Fact]
     public void Position_advances_to_end_of_last_complete_line()
     {
         using var log = new TempLog();

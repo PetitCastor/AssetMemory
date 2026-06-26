@@ -527,6 +527,17 @@ public sealed class AssetMemoryStore
         return list;
     }
 
+    // -------- clear --------
+
+    public void ClearAll()
+    {
+        Exec("DELETE FROM events_audit;");
+        Exec("DELETE FROM holdings;");
+        Exec("DELETE FROM equipped;");
+        Exec("DELETE FROM items;");
+        Exec("DELETE FROM locations;");
+    }
+
     // -------- helpers --------
 
     private void Exec(string sql)

@@ -154,6 +154,40 @@ body {
     color: var(--accent);
 }
 
+.table-area {
+    position: relative;
+}
+
+.sync-overlay {
+    position: absolute;
+    inset: 0;
+    background: var(--bg);
+    opacity: 0.9;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+    border-radius: 0 0 var(--radius) var(--radius);
+}
+
+.sync-overlay-content {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    color: var(--text-muted);
+    font-size: 0.875rem;
+}
+
+.spinner {
+    width: 20px;
+    height: 20px;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
 .table-wrapper {
     background: var(--bg);
     border-left: 1px solid var(--border);
@@ -321,6 +355,21 @@ tbody tr:hover {
     height: 14px;
 }
 
+.status-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-shrink: 0;
+}
+
+.clear-confirm {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
 .sync-result {
     margin-top: 0.5rem;
     font-size: 0.75rem;
@@ -390,6 +439,22 @@ tbody tr:hover {
     margin-top: 0.75rem !important;
 }
 
+.setup-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    margin-top: 1rem;
+    cursor: pointer;
+    justify-content: center;
+}
+
+.setup-checkbox input[type="checkbox"] {
+    accent-color: var(--accent);
+    cursor: pointer;
+}
+
 .setup-error {
     color: #ef4444;
     font-size: 0.8125rem;
@@ -424,6 +489,21 @@ tbody tr:hover {
 
 .btn-secondary:hover {
     border-color: var(--text-muted);
+}
+
+.btn-danger {
+    background: #ef4444;
+    color: #fff;
+    border: none;
+    border-radius: var(--radius);
+    padding: 0.5rem 1.25rem;
+    font-size: 0.8125rem;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.btn-danger:hover {
+    opacity: 0.9;
 }
 
 .btn-sm {

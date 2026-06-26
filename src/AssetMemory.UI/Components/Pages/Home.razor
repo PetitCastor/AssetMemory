@@ -9,6 +9,7 @@
 @inject AppSettings Settings
 @inject LogTailer Tailer
 @inject SyncService SyncSvc
+@inject GameLogCollector Collector
 @inject IJSRuntime JS
 
 <PageTitle>AssetMemory</PageTitle>
@@ -48,6 +49,11 @@
 
             <p class="setup-hint">Point to your StarCitizen folder (containing LIVE, PTU, or EPTU).</p>
 
+            <label class="setup-checkbox">
+                <input type="checkbox" @bind="_startFresh" />
+                <span>Start fresh (skip historical log, track forward only)</span>
+            </label>
+
             @if (_pathError is not null)
             {
                 <p class="setup-error">@_pathError</p>
@@ -56,19 +62,6 @@
     }
     else
     {
-        @if (_editingPath)
-        {
-            <div class="path-editor">
-                <input type="text" @bind="PathInput" placeholder="E:\Games\StarCitizen" class="setup-input" />
-                <button class="btn-primary btn-sm" @onclick="ApplyPath">Save</button>
-                <button class="btn-secondary btn-sm" @onclick="() => { _editingPath = false; _pathError = null; }">Cancel</button>
-                @if (_pathError is not null)
-                {
-                    <span class="setup-error">@_pathError</span>
-                }
-            </div>
-        }
-
         <div class="toolbar">
             <div class="filter-group">
                 <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
@@ -102,6 +95,16 @@
             </button>
         </div>
 
+        <div class="table-area">
+        @if (!Collector.HasCompletedFirstTick)
+        {
+            <div class="sync-overlay">
+                <div class="sync-overlay-content">
+                    <svg class="spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                    <span>Syncing inventory from Game.log&hellip;</span>
+                </div>
+            </div>
+        }
         <div class="table-wrapper">
             <table>
                 <thead>
@@ -165,27 +168,61 @@
             </div>
             <span>@_pageResult.TotalUnits units total</span>
         </footer>
+        </div>
 
         <div class="status-bar">
-            <div class="status-left">
-                <span class="status-dot active"></span>
-                <span>Watching @ChannelName</span>
-                <span class="status-path" title="@Settings.GameLogPath">@Settings.GameLogPath</span>
-                <button class="edit-path-btn" @onclick="StartEditPath" title="Change game folder">
-                    <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                </button>
-            </div>
-            <button class="sync-btn" @onclick="RunSync" disabled="@SyncSvc.IsSyncing">
-                @if (SyncSvc.IsSyncing)
-                {
-                    <span>Syncing...</span>
-                }
-                else
-                {
-                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><polyline points="23 20 23 14 17 14"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>
-                    <span>Sync backups</span>
-                }
-            </button>
+            @if (_editingPath)
+            {
+                <div class="path-editor">
+                    <input type="text" @bind="PathInput" placeholder="E:\Games\StarCitizen" class="setup-input" />
+                    <button class="btn-primary btn-sm" @onclick="ApplyPath">Save</button>
+                    <button class="btn-secondary btn-sm" @onclick="() => { _editingPath = false; _pathError = null; }">Cancel</button>
+                    @if (_pathError is not null)
+                    {
+                        <span class="setup-error">@_pathError</span>
+                    }
+                </div>
+            }
+            else
+            {
+                <div class="status-left">
+                    <span class="status-dot active"></span>
+                    <span>Watching @ChannelName</span>
+                    <span class="status-path" title="@Settings.GameLogPath">@Settings.GameLogPath</span>
+                    <button class="edit-path-btn" @onclick="StartEditPath" title="Change game folder">
+                        <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                    </button>
+                </div>
+                <div class="status-actions">
+                    <button class="sync-btn" @onclick="RunSync" disabled="@_syncing">
+                        @if (_syncing)
+                        {
+                            <svg class="icon spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                            <span>Syncing...</span>
+                        }
+                        else
+                        {
+                            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><polyline points="23 20 23 14 17 14"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>
+                            <span>Sync backups</span>
+                        }
+                    </button>
+                    @if (_confirmingClear)
+                    {
+                        <span class="clear-confirm">
+                            <span>Erase all tracked data and track forward only?</span>
+                            <button class="btn-danger btn-sm" @onclick="ConfirmClear">Yes, start fresh</button>
+                            <button class="btn-secondary btn-sm" @onclick="() => _confirmingClear = false">Cancel</button>
+                        </span>
+                    }
+                    else
+                    {
+                        <button class="sync-btn" @onclick="() => _confirmingClear = true" title="Clear all tracked inventory and start fresh">
+                            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                            <span>Start fresh</span>
+                        </button>
+                    }
+                </div>
+            }
         </div>
 
         @if (_syncMessage is not null)
@@ -230,6 +267,9 @@
     private string PathInput { get; set; } = "";
     private string? _pathError;
     private bool _editingPath;
+    private bool _startFresh;
+    private bool _confirmingClear;
+    private bool _syncing;
     private System.Threading.Timer? _refreshTimer;
 
     private string ChannelName =>
@@ -313,6 +353,8 @@
         Settings.GameLogPath = path;
         Settings.Save(Path.Combine(AppContext.BaseDirectory, "settings.json"));
         Tailer.SetPath(path);
+        if (_startFresh)
+            Tailer.SeekToEnd();
         LoadData();
     }
 
@@ -324,10 +366,30 @@
         _pathError = null;
     }
 
-    private void RunSync()
+    private async Task RunSync()
     {
-        var result = SyncSvc.Sync();
-        _syncMessage = result.Message;
+        _syncing = true;
+        _syncMessage = null;
+        try
+        {
+            var result = await Task.Run(() => SyncSvc.Sync());
+            _syncMessage = result.Message;
+            _page = 1;
+            LoadData();
+        }
+        finally
+        {
+            _syncing = false;
+        }
+    }
+
+    private void ConfirmClear()
+    {
+        Collector.StartFresh(() => Store.ClearAll());
+        Settings.ProcessedBackups.Clear();
+        Settings.Save(Path.Combine(AppContext.BaseDirectory, "settings.json"));
+        _confirmingClear = false;
+        _syncMessage = null;
         _page = 1;
         LoadData();
     }

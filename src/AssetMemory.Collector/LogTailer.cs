@@ -34,6 +34,12 @@ public sealed class LogTailer : IDisposable
 
     public void Reset() => _position = 0;
 
+    public void SeekToEnd()
+    {
+        if (File.Exists(_path))
+            _position = new FileInfo(_path).Length;
+    }
+
     public IEnumerable<string> ReadNew()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
