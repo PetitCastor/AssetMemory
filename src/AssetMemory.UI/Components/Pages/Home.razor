@@ -1,5 +1,6 @@
 @page "/"
 @rendermode InteractiveServer
+@implements IDisposable
 @using AssetMemory.Collector
 @using AssetMemory.Data
 @using AssetMemory.Core.Detection
@@ -87,6 +88,15 @@
                     <button class="clear-btn" @onclick="() => SearchTerm = string.Empty" title="Clear">&times;</button>
                 }
             </div>
+            <div class="filter-group">
+                <span class="page-size-label">Per page</span>
+                <select @bind="PageSize">
+                    @foreach (var size in PageSizeOptions)
+                    {
+                        <option value="@size">@size</option>
+                    }
+                </select>
+            </div>
             <button class="refresh-btn" @onclick="LoadData" title="Refresh">
                 <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
             </button>
@@ -115,11 +125,11 @@
                     </tr>
                 </thead>
                 <tbody>
-                    @if (!FilteredRows.Any())
+                    @if (_pageResult.Rows.Count == 0)
                     {
                         <tr>
                             <td colspan="4" class="empty-state">
-                                @if (AllRows.Count == 0)
+                                @if (_pageResult.TotalCount == 0)
                                 {
                                     <span>No inventory data yet. Play Star Citizen and open your inventory to start collecting.</span>
                                 }
@@ -132,7 +142,7 @@
                     }
                     else
                     {
-                        @foreach (var row in FilteredRows)
+                        @foreach (var row in _pageResult.Rows)
                         {
                             <tr>
                                 <td>@(row.ItemDisplayName ?? row.ItemClassName)</td>
@@ -147,8 +157,13 @@
         </div>
 
         <footer class="table-footer">
-            <span>@FilteredRows.Count() rows across @FilteredRows.Select(r => r.LocationId).Distinct().Count() locations</span>
-            <span>@FilteredRows.Sum(r => r.Quantity) units total</span>
+            <span>@_pageResult.TotalCount rows across @_pageResult.DistinctLocations locations</span>
+            <div class="pager">
+                <button class="btn-secondary btn-sm" disabled="@(_page <= 1)" @onclick="() => GoToPage(_page - 1)">&lsaquo; Prev</button>
+                <span>Page @_page of @TotalPages</span>
+                <button class="btn-secondary btn-sm" disabled="@(_page >= TotalPages)" @onclick="() => GoToPage(_page + 1)">Next &rsaquo;</button>
+            </div>
+            <span>@_pageResult.TotalUnits units total</span>
         </footer>
 
         <div class="status-bar">
@@ -181,18 +196,41 @@
 </div>
 
 @code {
-    private List<HoldingDetail> AllRows = [];
-    private List<LocationSummary> Locations = [];
+    private static readonly int[] PageSizeOptions = [10, 25, 50, 100];
 
-    private string SearchTerm { get; set; } = "";
-    private string SelectedLocation { get; set; } = "";
+    private HoldingDetailsPage _pageResult = new([], 0, 0, 0);
+    private List<LocationRow> Locations = [];
+
+    private string _searchTerm = "";
+    private string SearchTerm
+    {
+        get => _searchTerm;
+        set { _searchTerm = value; _page = 1; LoadData(); }
+    }
+
+    private string _selectedLocation = "";
+    private string SelectedLocation
+    {
+        get => _selectedLocation;
+        set { _selectedLocation = value; _page = 1; LoadData(); }
+    }
+
     private string SortColumn { get; set; } = "item";
     private bool SortAsc { get; set; } = true;
+    private int _page = 1;
+    private int _pageSize = 25;
+    private int PageSize
+    {
+        get => _pageSize;
+        set { _pageSize = value; _page = 1; LoadData(); }
+    }
+    private int TotalPages => Math.Max(1, (int)Math.Ceiling((double)_pageResult.TotalCount / _pageSize));
     private string _theme = "dark";
     private string? _syncMessage;
     private string PathInput { get; set; } = "";
     private string? _pathError;
     private bool _editingPath;
+    private System.Threading.Timer? _refreshTimer;
 
     private string ChannelName =>
         Path.GetFileName(Path.GetDirectoryName(Settings.GameLogPath ?? "") ?? "");
@@ -201,7 +239,17 @@
     {
         if (!string.IsNullOrEmpty(Settings.GameLogPath))
             LoadData();
+
+        // The collector ticks in the background regardless of this page; poll so newly captured
+        // inventory shows up without the user having to hit the manual refresh/sync buttons.
+        _refreshTimer = new System.Threading.Timer(_ => InvokeAsync(() =>
+        {
+            LoadData();
+            StateHasChanged();
+        }), null, TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(3));
     }
+
+    public void Dispose() => _refreshTimer?.Dispose();
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -280,59 +328,25 @@
     {
         var result = SyncSvc.Sync();
         _syncMessage = result.Message;
+        _page = 1;
         LoadData();
     }
 
     private void LoadData()
     {
+        long? locId = long.TryParse(SelectedLocation, out var parsed) ? parsed : null;
+        var term = string.IsNullOrWhiteSpace(SearchTerm) ? null : SearchTerm.Trim();
+
         // Station inventories only — a resolved label marks a place we can name (New Babbage,
         // Lorville, …). Container-held items (backpacks, SCU boxes, worn armor) stay hidden for now.
-        AllRows = Store.GetAllHoldingDetails()
-            .Where(r => r.LocationLabel is not null)
-            .ToList();
-        Locations = AllRows
-            .GroupBy(r => r.LocationId)
-            .Select(g => new LocationSummary(g.Key, g.First().LocationLabel))
-            .OrderBy(l => l.Label ?? $"zzz{l.Id}")
-            .ToList();
+        _pageResult = Store.GetHoldingDetailsPage(locId, term, SortColumn, SortAsc, _page, _pageSize);
+        Locations = Store.GetLocationsWithHoldings().ToList();
     }
 
-    private IEnumerable<HoldingDetail> FilteredRows
+    private void GoToPage(int page)
     {
-        get
-        {
-            IEnumerable<HoldingDetail> rows = AllRows;
-
-            if (long.TryParse(SelectedLocation, out var locId))
-                rows = rows.Where(r => r.LocationId == locId);
-
-            if (!string.IsNullOrWhiteSpace(SearchTerm))
-            {
-                var term = SearchTerm.Trim();
-                rows = rows.Where(r =>
-                    (r.ItemDisplayName?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false) ||
-                    r.ItemClassName.Contains(term, StringComparison.OrdinalIgnoreCase));
-            }
-
-            rows = SortColumn switch
-            {
-                "item" => SortAsc
-                    ? rows.OrderBy(r => r.ItemDisplayName ?? r.ItemClassName, StringComparer.OrdinalIgnoreCase)
-                    : rows.OrderByDescending(r => r.ItemDisplayName ?? r.ItemClassName, StringComparer.OrdinalIgnoreCase),
-                "location" => SortAsc
-                    ? rows.OrderBy(r => r.LocationLabel ?? $"zzz{r.LocationId}", StringComparer.OrdinalIgnoreCase)
-                    : rows.OrderByDescending(r => r.LocationLabel ?? $"zzz{r.LocationId}", StringComparer.OrdinalIgnoreCase),
-                "qty" => SortAsc
-                    ? rows.OrderBy(r => r.Quantity)
-                    : rows.OrderByDescending(r => r.Quantity),
-                "seen" => SortAsc
-                    ? rows.OrderBy(r => r.LastSeenUtc)
-                    : rows.OrderByDescending(r => r.LastSeenUtc),
-                _ => rows
-            };
-
-            return rows;
-        }
+        _page = Math.Clamp(page, 1, TotalPages);
+        LoadData();
     }
 
     private void ToggleSort(string column)
@@ -344,6 +358,8 @@
             SortColumn = column;
             SortAsc = true;
         }
+        _page = 1;
+        LoadData();
     }
 
     private static string FormatTimeAgo(DateTimeOffset utc)
@@ -355,6 +371,4 @@
         if (diff.TotalDays < 30) return $"{(int)diff.TotalDays}d ago";
         return utc.ToString("yyyy-MM-dd");
     }
-
-    private record LocationSummary(long Id, string? Label);
 }

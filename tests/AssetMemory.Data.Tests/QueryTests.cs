@@ -68,6 +68,185 @@ public class QueryTests
         }
     }
 
+    // ---------- GetHoldingDetailsPage ----------
+
+    private static (AssetMemoryStore store, Microsoft.Data.Sqlite.SqliteConnection conn) SeededForPaging()
+    {
+        var (store, conn) = TestStore.CreateMigrated();
+
+        // Locations 1..5 in label order A..E; items deliberately in the REVERSE display-name
+        // order (Z..V) and quantities/timestamps in their own distinct orders, so sorting by
+        // location vs. item vs. qty vs. seen each produce a different, checkable row order.
+        var labels = new[] { "Alpha", "Bravo", "Charlie", "Delta", "Echo" };
+        var itemNames = new[] { "Zeta", "Yankee", "Xray", "Whiskey", "Victor" };
+        var quantities = new[] { 10, 20, 5, 15, 1 };
+
+        for (var i = 0; i < 5; i++)
+        {
+            var locId = i + 1;
+            store.UpsertLocation(locId, T0, labels[i]);
+            var itemId = store.EnsureItem($"item_{itemNames[i].ToLowerInvariant()}", itemNames[i]);
+            store.AdjustHolding(locId, itemId, quantities[i], T0.AddSeconds(i));
+        }
+
+        return (store, conn);
+    }
+
+    [Fact]
+    public void GetHoldingDetailsPage_returns_requested_page_sorted_by_location()
+    {
+        var (store, conn) = SeededForPaging();
+        using (conn)
+        {
+            var page1 = store.GetHoldingDetailsPage(null, null, "location", true, page: 1, pageSize: 2);
+            Assert.Equal(["Alpha", "Bravo"], page1.Rows.Select(r => r.LocationLabel));
+
+            var page2 = store.GetHoldingDetailsPage(null, null, "location", true, page: 2, pageSize: 2);
+            Assert.Equal(["Charlie", "Delta"], page2.Rows.Select(r => r.LocationLabel));
+
+            var page3 = store.GetHoldingDetailsPage(null, null, "location", true, page: 3, pageSize: 2);
+            Assert.Equal(["Echo"], page3.Rows.Select(r => r.LocationLabel));
+        }
+    }
+
+    [Fact]
+    public void GetHoldingDetailsPage_totals_reflect_the_whole_filtered_set_not_just_the_page()
+    {
+        var (store, conn) = SeededForPaging();
+        using (conn)
+        {
+            var page = store.GetHoldingDetailsPage(null, null, "location", true, page: 1, pageSize: 2);
+
+            Assert.Equal(5, page.TotalCount);
+            Assert.Equal(5, page.DistinctLocations);
+            Assert.Equal(51, page.TotalUnits); // 10+20+5+15+1
+            Assert.Equal(2, page.Rows.Count);  // but only this page's rows
+        }
+    }
+
+    [Fact]
+    public void GetHoldingDetailsPage_sorts_by_item_display_name()
+    {
+        var (store, conn) = SeededForPaging();
+        using (conn)
+        {
+            var page = store.GetHoldingDetailsPage(null, null, "item", true, page: 1, pageSize: 5);
+            Assert.Equal(
+                ["Victor", "Whiskey", "Xray", "Yankee", "Zeta"],
+                page.Rows.Select(r => r.ItemDisplayName));
+        }
+    }
+
+    [Fact]
+    public void GetHoldingDetailsPage_sorts_by_quantity()
+    {
+        var (store, conn) = SeededForPaging();
+        using (conn)
+        {
+            var page = store.GetHoldingDetailsPage(null, null, "qty", true, page: 1, pageSize: 5);
+            Assert.Equal([1, 5, 10, 15, 20], page.Rows.Select(r => r.Quantity));
+        }
+    }
+
+    [Fact]
+    public void GetHoldingDetailsPage_descending_reverses_the_order()
+    {
+        var (store, conn) = SeededForPaging();
+        using (conn)
+        {
+            var page = store.GetHoldingDetailsPage(null, null, "qty", false, page: 1, pageSize: 5);
+            Assert.Equal([20, 15, 10, 5, 1], page.Rows.Select(r => r.Quantity));
+        }
+    }
+
+    [Fact]
+    public void GetHoldingDetailsPage_filters_by_location_id()
+    {
+        var (store, conn) = SeededForPaging();
+        using (conn)
+        {
+            var page = store.GetHoldingDetailsPage(2, null, "location", true, page: 1, pageSize: 10);
+            Assert.Single(page.Rows);
+            Assert.Equal("Bravo", page.Rows[0].LocationLabel);
+            Assert.Equal(1, page.TotalCount);
+        }
+    }
+
+    [Fact]
+    public void GetHoldingDetailsPage_filters_by_search_term_matching_display_name_or_class_name()
+    {
+        var (store, conn) = SeededForPaging();
+        using (conn)
+        {
+            var byDisplayName = store.GetHoldingDetailsPage(null, "yank", "location", true, 1, 10);
+            Assert.Single(byDisplayName.Rows);
+            Assert.Equal("Yankee", byDisplayName.Rows[0].ItemDisplayName);
+
+            var byClassName = store.GetHoldingDetailsPage(null, "item_victor", "location", true, 1, 10);
+            Assert.Single(byClassName.Rows);
+            Assert.Equal("Victor", byClassName.Rows[0].ItemDisplayName);
+        }
+    }
+
+    [Fact]
+    public void GetHoldingDetailsPage_excludes_unlabelled_locations()
+    {
+        var (store, conn) = SeededForPaging();
+        using (conn)
+        {
+            store.UpsertLocation(999, T0, null);
+            var helmet = store.EnsureItem("helmet_x", "Helmet X");
+            store.AdjustHolding(999, helmet, 1, T0);
+
+            var page = store.GetHoldingDetailsPage(null, null, "location", true, page: 1, pageSize: 10);
+            Assert.Equal(5, page.TotalCount); // the unlabelled holding is not counted
+            Assert.DoesNotContain(page.Rows, r => r.LocationId == 999);
+        }
+    }
+
+    [Fact]
+    public void GetHoldingDetailsPage_page_past_the_end_returns_no_rows_but_correct_totals()
+    {
+        var (store, conn) = SeededForPaging();
+        using (conn)
+        {
+            var page = store.GetHoldingDetailsPage(null, null, "location", true, page: 99, pageSize: 2);
+            Assert.Empty(page.Rows);
+            Assert.Equal(5, page.TotalCount);
+        }
+    }
+
+    [Fact]
+    public void GetHoldingDetailsPage_unknown_sort_column_throws()
+    {
+        var (store, conn) = SeededForPaging();
+        using (conn)
+        {
+            Assert.Throws<ArgumentException>(() =>
+                store.GetHoldingDetailsPage(null, null, "bogus", true, 1, 10));
+        }
+    }
+
+    // ---------- GetLocationsWithHoldings ----------
+
+    [Fact]
+    public void GetLocationsWithHoldings_returns_only_labelled_locations_that_have_holdings()
+    {
+        var (store, conn) = SeededForPaging();
+        using (conn)
+        {
+            store.UpsertLocation(999, T0, null); // unlabelled, no holdings either
+            store.UpsertLocation(998, T0, "Empty Outpost"); // labelled but no holdings
+
+            var locations = store.GetLocationsWithHoldings().ToList();
+
+            Assert.Equal(5, locations.Count);
+            Assert.Contains(locations, l => l.Label == "Alpha");
+            Assert.DoesNotContain(locations, l => l.Id == 999);
+            Assert.DoesNotContain(locations, l => l.Id == 998);
+        }
+    }
+
     // ---------- SearchItems ----------
 
     [Fact]

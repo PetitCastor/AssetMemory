@@ -29,6 +29,11 @@ public sealed class AssetMemoryStore
 
     public void ApplyMigration()
     {
+        // WAL lets the UI's read queries run without blocking on an in-progress sync, and
+        // synchronous=NORMAL is safe under WAL (SQLite docs: only the most recent commit can
+        // be lost on power failure, never corruption) while skipping most per-commit fsyncs.
+        Exec("PRAGMA journal_mode = WAL;");
+        Exec("PRAGMA synchronous = NORMAL;");
         Exec("PRAGMA foreign_keys = ON;");
         Exec("""
             CREATE TABLE IF NOT EXISTS locations (
@@ -69,6 +74,19 @@ public sealed class AssetMemoryStore
             """);
         Exec($"PRAGMA user_version = {CurrentSchemaVersion};");
     }
+
+    // -------- batching --------
+
+    /// <summary>
+    /// Wraps subsequent writes in one SQLite transaction so they commit (and fsync) together
+    /// instead of each autocommitting on its own -- the difference between one disk sync and
+    /// thousands when applying a large batch of events.
+    /// </summary>
+    public void BeginTransaction() => Exec("BEGIN;");
+
+    public void CommitTransaction() => Exec("COMMIT;");
+
+    public void RollbackTransaction() => Exec("ROLLBACK;");
 
     // -------- locations --------
 
@@ -313,6 +331,101 @@ public sealed class AssetMemoryStore
                 r.GetInt32(5),
                 ParseUtc(r.GetString(6)),
                 ParseUtc(r.GetString(7))));
+        return list;
+    }
+
+    /// <summary>
+    /// Filtered, sorted, paged station-inventory rows (container-held items stay hidden for now,
+    /// same as <see cref="GetAllHoldingDetails"/>'s longstanding UI usage -- only locations with a
+    /// resolved label are real "places" worth showing). Filtering, sorting, and paging all happen
+    /// in SQL so the UI never has to load the whole holdings table to show one page of it.
+    /// </summary>
+    public HoldingDetailsPage GetHoldingDetailsPage(
+        long? locationId, string? searchTerm, string sortColumn, bool sortAscending, int page, int pageSize)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(page, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThan(pageSize, 1);
+        var sortExpr = SortExpression(sortColumn);
+        var term = string.IsNullOrWhiteSpace(searchTerm) ? null : $"%{searchTerm}%";
+
+        const string filterSql = """
+            FROM holdings h
+            JOIN items i ON i.id = h.item_id
+            JOIN locations l ON l.id = h.location_id
+            WHERE l.label IS NOT NULL
+              AND ($loc IS NULL OR h.location_id = $loc)
+              AND ($term IS NULL OR i.display_name LIKE $term OR i.class_name LIKE $term)
+            """;
+
+        using var countCmd = _conn.CreateCommand();
+        countCmd.CommandText = $"""
+            SELECT COUNT(*), COUNT(DISTINCT h.location_id), COALESCE(SUM(h.quantity), 0)
+            {filterSql};
+            """;
+        countCmd.Parameters.AddWithValue("$loc", (object?)locationId ?? DBNull.Value);
+        countCmd.Parameters.AddWithValue("$term", (object?)term ?? DBNull.Value);
+        int totalCount; int distinctLocations; long totalUnits;
+        using (var cr = countCmd.ExecuteReader())
+        {
+            cr.Read();
+            totalCount = cr.GetInt32(0);
+            distinctLocations = cr.GetInt32(1);
+            totalUnits = cr.GetInt64(2);
+        }
+
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = $"""
+            SELECT h.location_id, l.label,
+                   h.item_id, i.class_name, i.display_name,
+                   h.quantity, h.first_seen_utc, h.last_seen_utc
+            {filterSql}
+            ORDER BY {sortExpr} {(sortAscending ? "ASC" : "DESC")}
+            LIMIT $take OFFSET $skip;
+            """;
+        cmd.Parameters.AddWithValue("$loc", (object?)locationId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$term", (object?)term ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$take", pageSize);
+        cmd.Parameters.AddWithValue("$skip", (page - 1) * pageSize);
+        using var r = cmd.ExecuteReader();
+        var rows = new List<HoldingDetail>();
+        while (r.Read())
+            rows.Add(new HoldingDetail(
+                r.GetInt64(0),
+                r.IsDBNull(1) ? null : r.GetString(1),
+                r.GetInt64(2),
+                r.GetString(3),
+                r.IsDBNull(4) ? null : r.GetString(4),
+                r.GetInt32(5),
+                ParseUtc(r.GetString(6)),
+                ParseUtc(r.GetString(7))));
+
+        return new HoldingDetailsPage(rows, totalCount, distinctLocations, totalUnits);
+    }
+
+    private static string SortExpression(string column) => column switch
+    {
+        "item" => "COALESCE(i.display_name, i.class_name) COLLATE NOCASE",
+        "location" => "l.label COLLATE NOCASE",
+        "qty" => "h.quantity",
+        "seen" => "h.last_seen_utc",
+        _ => throw new ArgumentException($"Unknown sort column '{column}'.", nameof(column)),
+    };
+
+    /// <summary>Distinct labelled locations that currently hold at least one item -- backs the location filter dropdown.</summary>
+    public IEnumerable<LocationRow> GetLocationsWithHoldings()
+    {
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT DISTINCT l.id, l.label, l.last_seen_utc
+            FROM holdings h
+            JOIN locations l ON l.id = h.location_id
+            WHERE l.label IS NOT NULL
+            ORDER BY l.label;
+            """;
+        using var r = cmd.ExecuteReader();
+        var list = new List<LocationRow>();
+        while (r.Read())
+            list.Add(new LocationRow(r.GetInt64(0), r.GetString(1), ParseUtc(r.GetString(2))));
         return list;
     }
 

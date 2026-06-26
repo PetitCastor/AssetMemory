@@ -1,6 +1,20 @@
+```
+   ╭─────╮
+   │     │
+   │     │
+   ╰─────╯
+         ╲
+          ╲
+           ╲
+```
+
 # AssetMemory
 
-A local inventory tracker for Star Citizen. It tails your `Game.log` in the background and remembers where every item ended up, so you can find gear you stashed weeks ago without digging through every container in the 'verse.
+*"Where the heck did I put my medpens?" — every Star Citizen player, every single play session*
+
+A local inventory tracker for Star Citizen. It tails your `Game.log` in the background like a small, well-behaved stalker, and remembers where every item ended up — so you can stop opening forty-seven containers across three star systems looking for one (1) bottle of Synergy.
+
+It cannot find your ship. It cannot find your sanity after a server crash ate your loot run. It can, however, tell you with great confidence that the rifle you swear you picked up is, in fact, sitting in a box in New Babbage where you left it eleven days ago.
 
 ## How it works
 
@@ -30,3 +44,21 @@ On first launch, point it at your Star Citizen install folder (auto-detect or ma
 ```
 dotnet test
 ```
+
+## Packaging & distribution
+
+The app ships as a single self-contained Windows executable — no .NET runtime needs to be installed on the target machine. When launched it runs in the **system tray** (no console window), opens the inventory UI in your default browser, and keeps collecting in the background. Right-click the tray icon for **Open** / **Exit**; launching it a second time just re-opens the UI rather than starting a duplicate.
+
+Build the distributable from the repo root:
+
+```
+./publish.ps1
+```
+
+This produces `dist/AssetMemory-win-x64.zip` (~56 MB). To share it: send that zip; the recipient unzips it anywhere **writable** (not `Program Files`, since the app writes `settings.json` and `assetmemory.db` next to the exe) and runs `AssetMemory.exe`.
+
+Notes:
+- `./publish.ps1 -NoZip` produces just the publish folder without archiving.
+- The whole unzipped folder is required, not only the exe — `wwwroot/` and the static-asset manifest sit alongside it.
+- The exe is unsigned, so Windows SmartScreen may warn on first run ("More info" → "Run anyway"). Code-signing is a future step.
+- Drop an `app.ico` next to the exe to replace the default tray icon — it's picked up automatically.

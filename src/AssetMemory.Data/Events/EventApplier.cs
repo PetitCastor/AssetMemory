@@ -22,6 +22,36 @@ public sealed class EventApplier
         _stations = stations ?? new StationNameResolver();
     }
 
+    /// <summary>
+    /// Applies a whole sequence of events under one transaction. Use this for any multi-event
+    /// batch (a tick's worth of new lines, a whole backlog file) -- applying events one at a
+    /// time outside a transaction means every write autocommits (and fsyncs) on its own, which
+    /// dominates sync time once you're applying hundreds of thousands of events.
+    /// </summary>
+    /// <returns>Number of events applied.</returns>
+    public int ApplyBatch(IEnumerable<InventoryEvent> events)
+    {
+        ArgumentNullException.ThrowIfNull(events);
+
+        _store.BeginTransaction();
+        try
+        {
+            var count = 0;
+            foreach (var ev in events)
+            {
+                Apply(ev);
+                count++;
+            }
+            _store.CommitTransaction();
+            return count;
+        }
+        catch
+        {
+            _store.RollbackTransaction();
+            throw;
+        }
+    }
+
     public void Apply(InventoryEvent ev)
     {
         ArgumentNullException.ThrowIfNull(ev);

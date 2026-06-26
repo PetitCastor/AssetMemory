@@ -16,6 +16,7 @@ obj/
 ## Build
 publish/
 out/
+dist/
 
 ## OS
 Thumbs.db

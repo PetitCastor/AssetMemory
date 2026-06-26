@@ -29,13 +29,7 @@ public sealed class GameLogCollector
         // on the same underlying SQLite connection (SqliteConnection isn't thread-safe).
         lock (_lock)
         {
-            var count = 0;
-            foreach (var ev in _reader.Read(_tailer.ReadNew()))
-            {
-                _applier.Apply(ev);
-                count++;
-            }
-            return count;
+            return _applier.ApplyBatch(_reader.Read(_tailer.ReadNew()));
         }
     }
 
@@ -43,13 +37,7 @@ public sealed class GameLogCollector
     {
         lock (_lock)
         {
-            var count = 0;
-            foreach (var ev in _reader.Read(ReadLinesShared(path)))
-            {
-                _applier.Apply(ev);
-                count++;
-            }
-            return count;
+            return _applier.ApplyBatch(_reader.Read(ReadLinesShared(path)));
         }
     }
 

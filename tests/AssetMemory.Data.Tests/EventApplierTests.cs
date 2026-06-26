@@ -236,6 +236,52 @@ public class EventApplierTests
         }
     }
 
+    // ---------- batched apply ----------
+
+    [Fact]
+    public void ApplyBatch_applies_every_event_same_as_looped_individual_apply_calls()
+    {
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            var reader = new InventoryLogReader();
+            var path = Path.Combine(AppContext.BaseDirectory, "Fixtures", "synergy-box-session.log");
+            var events = reader.Read(File.ReadLines(path));
+
+            var count = ApplierFor(store).ApplyBatch(events);
+
+            Assert.True(count > 0);
+            var item = store.GetItem("Drink_bottle_synergy_01_plus_a")!;
+            Assert.Equal(2, store.GetHolding(601563981557, item.Id)!.Quantity);
+            Assert.Null(store.GetHolding(595318982158, item.Id));
+            Assert.NotNull(store.GetLocation(2900774186));
+        }
+    }
+
+    [Fact]
+    public void ApplyBatch_rolls_back_every_event_in_the_batch_if_one_of_them_throws()
+    {
+        // EnsureItem rejects an empty class name. That failure should undo the whole batch,
+        // not just the offending event -- the point of wrapping the batch in one transaction.
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            var events = new InventoryEvent[]
+            {
+                new ContainerOpenedEvent(T0, "Arcadiius",
+                    new InventoryRef(0, InventoryKind.Location, 1, "0:Location:1"), "box", 1),
+                new ItemMovedEvent(T0.AddSeconds(1), "Arcadiius", "", 1,
+                    new InventoryRef(11, InventoryKind.Container, 0, "11:Container:0"),
+                    new InventoryRef(22, InventoryKind.Container, 0, "22:Container:0"), 1),
+            };
+
+            Assert.ThrowsAny<ArgumentException>(() => ApplierFor(store).ApplyBatch(events));
+
+            Assert.Null(store.GetLocation(1));
+            Assert.Empty(store.ReadAudit());
+        }
+    }
+
     // ---------- end-to-end through the real parser ----------
 
     [Fact]

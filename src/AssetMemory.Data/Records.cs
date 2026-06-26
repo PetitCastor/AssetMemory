@@ -32,6 +32,12 @@ public sealed record HoldingDetail(
     DateTimeOffset FirstSeenUtc,
     DateTimeOffset LastSeenUtc);
 
+public sealed record HoldingDetailsPage(
+    IReadOnlyList<HoldingDetail> Rows,
+    int TotalCount,
+    int DistinctLocations,
+    long TotalUnits);
+
 public sealed record ItemLocationDetail(
     long LocationId,
     string? LocationLabel,

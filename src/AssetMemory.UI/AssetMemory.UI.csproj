@@ -11,7 +11,10 @@
   </ItemGroup>
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <!-- WinExe + WindowsForms so the tray host runs with no console window. -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <OutputType>WinExe</OutputType>
+    <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <BlazorDisableThrowNavigationException>true</BlazorDisableThrowNavigationException>
@@ -20,6 +23,10 @@
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <!-- Embed symbols so the publish folder has no loose .pdb files to ship. -->
+    <DebugType>embedded</DebugType>
+    <!-- ...and don't drag the referenced projects' .pdb/.xml into the publish folder either. -->
+    <AllowedReferenceRelatedFileExtensions>none</AllowedReferenceRelatedFileExtensions>
   </PropertyGroup>
 
 </Project>
