@@ -30,6 +30,28 @@ public class InventoryLogReaderTests
         Assert.Empty(events);
     }
 
+    [Fact]
+    public void Reader_identifies_a_station_open_and_ignores_container_opens()
+    {
+        // Realistic ordering: container opens fire first (no readable name), then a station
+        // open arrives as a RequestLocationInventory immediately followed by its numeric ref.
+        string[] lines =
+        [
+            "<2026-03-05T17:23:38.216Z> [Notice] <RequestInventory> Request[0] Inventory[9550546582049:Container:0] [Team_CoreGameplayFeatures][Inventory]",
+            "<2026-03-05T17:23:50.781Z> [Notice] <RequestInventory> Request[1] Inventory[9487979850469:Container:0] [Team_CoreGameplayFeatures][Inventory]",
+            "<2026-03-05T17:23:51.074Z> [Notice] <RequestLocationInventory> Player[Arrogant] requested inventory for Location[RR_HUR_LEO] [Team_CoreGameplayFeatures][Inventory]",
+            "<2026-03-05T17:23:51.074Z> [Notice] <RequestInventory> Request[3] Inventory[200146296252:Location:308639451] [Team_CoreGameplayFeatures][Inventory]",
+        ];
+
+        var station = new InventoryLogReader().Read(lines)
+            .OfType<StationIdentifiedEvent>()
+            .Single();
+
+        Assert.Equal("Arrogant", station.Player);
+        Assert.Equal(308639451, station.PlaceId);
+        Assert.Equal("RR_HUR_LEO", station.StationCode);
+    }
+
     // ---------- large: end-to-end over a real captured session ----------
 
     [Fact]
@@ -39,10 +61,8 @@ public class InventoryLogReaderTests
 
         var events = reader.Read(File.ReadLines(Fixture("synergy-box-session.log"))).ToList();
 
-        // player-identity (from the "Attempting queuing" line), open, grid-count,
-        // move-out, move-back, close — remaining noise lines filtered out.
+        // open, grid-count, move-out, move-back, close — noise lines filtered out.
         Assert.Collection(events,
-            e => Assert.IsType<PlayerIdentityEvent>(e),
             e => Assert.IsType<ContainerOpenedEvent>(e),
             e => Assert.IsType<GridItemCountEvent>(e),
             e => Assert.IsType<ItemMovedEvent>(e),

@@ -285,7 +285,11 @@
 
     private void LoadData()
     {
-        AllRows = Store.GetAllHoldingDetails().ToList();
+        // Station inventories only — a resolved label marks a place we can name (New Babbage,
+        // Lorville, …). Container-held items (backpacks, SCU boxes, worn armor) stay hidden for now.
+        AllRows = Store.GetAllHoldingDetails()
+            .Where(r => r.LocationLabel is not null)
+            .ToList();
         Locations = AllRows
             .GroupBy(r => r.LocationId)
             .Select(g => new LocationSummary(g.Key, g.First().LocationLabel))

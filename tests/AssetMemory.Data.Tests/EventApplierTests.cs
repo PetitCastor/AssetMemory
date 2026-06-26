@@ -169,53 +169,39 @@ public class EventApplierTests
     }
 
     [Fact]
-    public void Equipped_labels_its_own_container_location_from_the_item_name()
+    public void Station_identified_labels_its_place_id_with_the_resolved_name()
     {
         var (store, conn) = TestStore.CreateMigrated();
         using (conn)
         {
-            ApplierFor(store).Apply(new EquippedItemEvent(
-                T0, "Arcadiius",
-                ItemClass: "grin_utility_medium_legs_01_01_04",
-                InstanceName: "grin_utility_medium_legs_01_01_04_9454043707556",
-                EntityId: 9454043707556,
-                Port: "Armor_Legs",
-                Status: "persistent"));
+            ApplierFor(store).Apply(new StationIdentifiedEvent(
+                T0, "Arrogant", PlaceId: 3170699229, StationCode: "Stanton4_NewBabbage"));
 
-            var loc = store.GetLocation(9454043707556)!;
-            Assert.Equal("Grin utility medium legs 01 01 04 (worn)", loc.Label);
+            Assert.Equal("New Babbage", store.GetLocation(3170699229)!.Label);
         }
     }
 
     [Fact]
-    public void PlayerIdentity_labels_the_players_own_location_with_their_name()
+    public void Move_to_a_station_is_keyed_on_place_id_not_the_owning_geid()
     {
-        var (store, conn) = TestStore.CreateMigrated();
-        using (conn)
-        {
-            ApplierFor(store).Apply(new PlayerIdentityEvent(T0, "Arrogant", 200146296252));
-
-            Assert.Equal("Arrogant", store.GetLocation(200146296252)!.Label);
-        }
-    }
-
-    [Fact]
-    public void PlayerIdentity_label_survives_a_later_move_through_that_location()
-    {
-        // Moves always upsert their endpoints with label: null — confirms that doesn't clobber
-        // a name already learned for the player's GEID-keyed personal inventory location.
+        // A station ref is GEID:Location:placeId — holdings must accrue under placeId (3170699229),
+        // not the GEID (200146296252) which is identical across every station the player visits.
         var (store, conn) = TestStore.CreateMigrated();
         using (conn)
         {
             var applier = ApplierFor(store);
-            applier.Apply(new PlayerIdentityEvent(T0, "Arrogant", 200146296252));
+            applier.Apply(new StationIdentifiedEvent(
+                T0, "Arrogant", PlaceId: 3170699229, StationCode: "Stanton4_NewBabbage"));
             applier.Apply(new ItemMovedEvent(T0.AddSeconds(1),
-                "Arrogant", "foo", 1,
-                new InventoryRef(200146296252, InventoryKind.Location, 0, "200146296252:Location:0"),
-                new InventoryRef(11, InventoryKind.Container, 0, "11:Container:0"),
+                "Arrogant", "medpen", 3,
+                new InventoryRef(9551313454351, InventoryKind.Container, 0, "9551313454351:Container:0"),
+                new InventoryRef(200146296252, InventoryKind.Location, 3170699229, "200146296252:Location:3170699229"),
                 1));
 
-            Assert.Equal("Arrogant", store.GetLocation(200146296252)!.Label);
+            var item = store.GetItem("medpen")!;
+            Assert.Equal(3, store.GetHolding(3170699229, item.Id)!.Quantity);  // keyed on placeId
+            Assert.Null(store.GetHolding(200146296252, item.Id));               // not on the GEID
+            Assert.Equal("New Babbage", store.GetLocation(3170699229)!.Label);  // label preserved
         }
     }
 

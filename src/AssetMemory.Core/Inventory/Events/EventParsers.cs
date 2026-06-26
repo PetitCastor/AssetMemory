@@ -162,24 +162,59 @@ public sealed partial class ContainerClosedParser : IInventoryEventParser
 }
 
 /// <summary>
-/// Catch-all: any log line of any category carrying the common "for 'Name' [geid]" pattern.
-/// Learns a player's display name for their GEID so their personal inventory location (which
-/// uses the GEID as its location id) can be auto-labelled instead of showing a raw number.
-/// Registered last so more specific parsers above claim their lines first.
+/// Stateful: recognises a station's persistent local inventory by pairing a
+/// <c>&lt;RequestLocationInventory&gt;</c> line (carries the readable code) with the
+/// <c>&lt;RequestInventory&gt;</c> line that immediately follows it (carries the numeric
+/// <c>GEID:Location:placeId</c> ref). The first line stashes state and reports no event;
+/// the second emits a <see cref="StationIdentifiedEvent"/>.
+///
+/// This is the gate that separates stations from the ~158k container opens that share the
+/// <c>RequestInventory</c> category: a bare <c>RequestInventory</c> with no pending
+/// location-request is ignored. Lines are processed in log order on a single thread.
 /// </summary>
-public sealed partial class PlayerIdentityParser : IInventoryEventParser
+public sealed class StationInventoryParser : IInventoryEventParser
 {
-    [GeneratedRegex(@"for '([^']+)' \[(\d+)\]", RegexOptions.Compiled)]
-    private static partial Regex PlayerGeidRegex();
+    // The two lines are always adjacent and share a timestamp to within ~1ms; anything beyond
+    // this window means the pending request was dangling (e.g. across a file/tick boundary).
+    private static readonly TimeSpan PairWindow = TimeSpan.FromSeconds(1);
+
+    private string? _pendingCode;
+    private string? _pendingPlayer;
+    private DateTimeOffset _pendingAt;
 
     public bool TryParse(LogEntry entry, [NotNullWhen(true)] out InventoryEvent? ev)
     {
         ev = null;
-        var m = PlayerGeidRegex().Match(entry.Message);
-        if (!m.Success || !FieldHelpers.TryLong(m.Groups[2].Value, out var geid))
+
+        if (entry.Category == "RequestLocationInventory")
+        {
+            var code = LogFields.Get(entry.Message, "Location");
+            if (!string.IsNullOrEmpty(code))
+            {
+                _pendingCode = code;
+                _pendingPlayer = LogFields.Get(entry.Message, "Player") ?? "";
+                _pendingAt = entry.Timestamp;
+            }
+            return false; // state stashed; the event comes on the paired line.
+        }
+
+        if (entry.Category != "RequestInventory")
             return false;
 
-        ev = new PlayerIdentityEvent(entry.Timestamp, m.Groups[1].Value, geid);
+        if (_pendingCode is null || entry.Timestamp - _pendingAt > PairWindow)
+            return false;
+
+        var pendingCode = _pendingCode;
+        var pendingPlayer = _pendingPlayer ?? "";
+        _pendingCode = null;
+        _pendingPlayer = null;
+
+        if (!InventoryRef.TryParse(LogFields.Get(entry.Message, "Inventory"), out var inv)
+            || inv.Kind != InventoryKind.Location)
+            return false;
+
+        ev = new StationIdentifiedEvent(entry.Timestamp, pendingPlayer, inv.Id, pendingCode);
         return true;
     }
 }
+

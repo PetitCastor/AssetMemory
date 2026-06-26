@@ -137,35 +137,58 @@ public class EventParserTests
         Assert.Equal(InventoryKind.ClientOnly, ((ContainerClosedEvent)ev!).Container.Kind);
     }
 
-    // ---------- PlayerIdentityParser ----------
+    // ---------- StationInventoryParser ----------
+    // A station is a <RequestInventory> with a :Location: ref immediately preceded by a
+    // <RequestLocationInventory> that carries the readable code. The parser is stateful:
+    // it stashes the code on the first line and emits the paired event on the second.
+
+    private const string NbLocLine =
+        "<2026-03-05T21:38:19.398Z> [Notice] <RequestLocationInventory> Player[Arrogant] requested inventory for Location[Stanton4_NewBabbage] [Team_CoreGameplayFeatures][Inventory]";
+    private const string NbInvLine =
+        "<2026-03-05T21:38:19.399Z> [Notice] <RequestInventory> Request[45] Inventory[200146296252:Location:3170699229] [Team_CoreGameplayFeatures][Inventory]";
+    private const string ContainerInvLine =
+        "<2026-03-05T17:23:38.216Z> [Notice] <RequestInventory> Request[0] Inventory[9550546582049:Container:0] [Team_CoreGameplayFeatures][Inventory]";
 
     [Fact]
-    public void PlayerIdentity_parses_name_and_geid_from_an_inventory_management_result_line()
+    public void Station_pairs_location_request_with_following_numeric_ref()
     {
-        const string line =
-            "<2026-03-05T20:54:45.953Z> [Notice] <InventoryManagement> Request[141] for 'Arrogant' [200146296252] Result[Succeed] Item[9582211815985] CanLockQueue[Yes]. [Team_CoreGameplayFeatures][Inventory]";
-        Assert.True(new PlayerIdentityParser().TryParse(Entry(line), out var ev));
-        var id = Assert.IsType<PlayerIdentityEvent>(ev);
-        Assert.Equal("Arrogant", id.Player);
-        Assert.Equal(200146296252, id.Geid);
+        var parser = new StationInventoryParser();
+
+        // The location-request line stashes state but is not itself an event.
+        Assert.False(parser.TryParse(Entry(NbLocLine), out _));
+        // The very next request-inventory line completes the pair (note the 1ms timestamp skew).
+        Assert.True(parser.TryParse(Entry(NbInvLine), out var ev));
+
+        var s = Assert.IsType<StationIdentifiedEvent>(ev);
+        Assert.Equal("Arrogant", s.Player);
+        Assert.Equal(3170699229, s.PlaceId);
+        Assert.Equal("Stanton4_NewBabbage", s.StationCode);
     }
 
     [Fact]
-    public void PlayerIdentity_parses_name_and_geid_from_an_unstow_finalized_line()
+    public void Station_ignores_a_bare_container_request_inventory()
     {
-        const string line =
-            "<2026-03-05T20:54:45.953Z> [Notice] <UnstowPendingEntities> Unstow Request[141] for 'Arrogant' [200146296252] finalized spawn of 'qrt_utility_heavy_legs_01_01_12_9582211815985' [9582211815985], 0 remaining [Team_CoreGameplayFeatures][Inventory]";
-        Assert.True(new PlayerIdentityParser().TryParse(Entry(line), out var ev));
-        var id = Assert.IsType<PlayerIdentityEvent>(ev);
-        Assert.Equal("Arrogant", id.Player);
-        Assert.Equal(200146296252, id.Geid);
+        // No preceding location-request → the gate rejects the (extremely common) container open.
+        Assert.False(new StationInventoryParser().TryParse(Entry(ContainerInvLine), out _));
     }
 
     [Fact]
-    public void PlayerIdentity_ignores_lines_without_a_bracketed_geid()
+    public void Station_pairing_is_consumed_so_a_later_container_open_is_not_mislabelled()
     {
-        const string line =
-            "<2026-06-24T19:23:50.563Z> [Notice] <Close Inventory Grid> Player[Arcadiius] closing inventory in progress... [Team_CoreGameplayFeatures][Inventory]";
-        Assert.False(new PlayerIdentityParser().TryParse(Entry(line), out _));
+        var parser = new StationInventoryParser();
+        Assert.False(parser.TryParse(Entry(NbLocLine), out _));
+        Assert.True(parser.TryParse(Entry(NbInvLine), out _));      // pair consumed here
+        Assert.False(parser.TryParse(Entry(ContainerInvLine), out _)); // pending must be cleared
+    }
+
+    [Fact]
+    public void Station_ignores_a_request_inventory_far_in_time_from_a_dangling_location_request()
+    {
+        // A location-request with no adjacent partner must not pair with an unrelated later open.
+        var parser = new StationInventoryParser();
+        Assert.False(parser.TryParse(Entry(NbLocLine), out _));
+        const string laterStationInv =
+            "<2026-03-05T22:10:00.000Z> [Notice] <RequestInventory> Request[7] Inventory[200146296252:Location:308639451] [Team_CoreGameplayFeatures][Inventory]";
+        Assert.False(parser.TryParse(Entry(laterStationInv), out _));
     }
 }

@@ -44,8 +44,14 @@ public sealed record EquippedItemEvent(
     string Port,
     string Status) : InventoryEvent(Timestamp);
 
-/// <summary>A player handle observed alongside their GEID — used to label their personal inventory location.</summary>
-public sealed record PlayerIdentityEvent(
+/// <summary>
+/// A station's persistent local inventory was opened, tying its numeric <see cref="PlaceId"/>
+/// (the 3rd field of a <c>GEID:Location:placeId</c> ref) to a readable <see cref="StationCode"/>
+/// (e.g. <c>Stanton4_NewBabbage</c>). Recovered by pairing a <c>RequestLocationInventory</c> line
+/// with the <c>RequestInventory</c> line that immediately follows it.
+/// </summary>
+public sealed record StationIdentifiedEvent(
     DateTimeOffset Timestamp,
     string Player,
-    long Geid) : InventoryEvent(Timestamp);
+    long PlaceId,
+    string StationCode) : InventoryEvent(Timestamp);
