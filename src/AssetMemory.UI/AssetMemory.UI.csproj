@@ -11,7 +11,12 @@
   </ItemGroup>
 
   <PropertyGroup>
-    <!-- WinExe + WindowsForms so the tray host runs with no console window. -->
+    <!-- WinExe + WindowsForms so the tray host runs with no console window. NOTE: combining
+         UseWindowsForms with Sdk.Web makes the SDK silently drop the ASP.NET Core internal
+         assets pack, the one that ships _framework/blazor.web.js, the script the interactive
+         Server circuit needs. Without it every Blazor interaction (clicks, the auto-refresh
+         timer) just silently does nothing. Worked around by vendoring blazor.web.js straight
+         into wwwroot/_framework (see that folder) instead of relying on the pack. -->
     <TargetFramework>net10.0-windows</TargetFramework>
     <OutputType>WinExe</OutputType>
     <UseWindowsForms>true</UseWindowsForms>
