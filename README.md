@@ -18,10 +18,10 @@ It cannot find your ship. It cannot find your sanity after a server crash ate yo
 
 ## How it works
 
-- A background collector tails `Game.log` (and can re-sync historical backup logs) for inventory move, equip, and container events.
-- Events are stored in a local SQLite database as a discovery ledger — locations and quantities are derived purely from what the log reveals.
-- Numeric location/player/entity IDs are auto-resolved into readable names (player handle, worn-item name) using data already present in the log — no external API involved.
-- A Blazor Server UI serves a searchable, sortable inventory table at `http://localhost:9222`.
+- A background collector tails `Game.log` (and can re-sync historical backup logs) for inventory move, equip, and container events — silently, in the background, judging none of your hoarding habits.
+- Events are stored in a local SQLite database as a discovery ledger — locations and quantities are derived purely from what the log reveals. No item left un-spreadsheeted.
+- Numeric location/player/entity IDs are auto-resolved into readable names (player handle, worn-item name, "New Babbage" instead of `3170699229`) using data already present in the log — no external API, no telemetry, no cloud. Your hoarding is for your eyes only.
+- A Blazor Server UI serves a searchable, sortable inventory table at `http://localhost:9222`, complete with pagination, because apparently some of us own 300+ distinct items and a flat unpaginated list was a war crime.
 
 ## Running
 
@@ -29,7 +29,7 @@ It cannot find your ship. It cannot find your sanity after a server crash ate yo
 dotnet run --project src/AssetMemory.UI
 ```
 
-On first launch, point it at your Star Citizen install folder (auto-detect or manual path). It starts tracking automatically from then on.
+On first launch, point it at your Star Citizen install folder (auto-detect or manual path). It starts tracking automatically from then on — no further effort required from you, which, statistically, is the part of this project you'll appreciate most.
 
 ## Project layout
 
@@ -62,3 +62,7 @@ Notes:
 - The whole unzipped folder is required, not only the exe — `wwwroot/` and the static-asset manifest sit alongside it.
 - The exe is unsigned, so Windows SmartScreen may warn on first run ("More info" → "Run anyway"). Code-signing is a future step.
 - Drop an `app.ico` next to the exe to replace the default tray icon — it's picked up automatically.
+
+---
+
+*No items were harmed in the making of this tracker. Several were, however, finally located.*
