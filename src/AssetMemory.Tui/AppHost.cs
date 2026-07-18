@@ -1,4 +1,5 @@
 using AssetMemory.Collector;
+using AssetMemory.Collector.Control;
 using AssetMemory.Core.Detection;
 using AssetMemory.Core.Resolution;
 using AssetMemory.Data;
@@ -75,6 +76,19 @@ public sealed class AppHost : IDisposable
             settingsPath,
             sp.GetRequiredService<ILogger<SyncService>>()));
 
+        // Control channel — so a second (viewer) TUI can attach to this instance and delegate writes.
+        builder.Services.AddSingleton(sp => new ControlService(
+            sp.GetRequiredService<GameLogCollector>(),
+            sp.GetRequiredService<SyncService>(),
+            sp.GetRequiredService<AssetMemoryStore>(),
+            sp.GetRequiredService<LogTailer>(),
+            settings,
+            settingsPath,
+            dbPath));
+        builder.Services.AddHostedService(sp => new ControlPipeServer(
+            sp.GetRequiredService<ControlService>(),
+            sp.GetRequiredService<ILogger<ControlPipeServer>>()));
+
         _host = builder.Build();
 
         // Force store creation (runs ApplyMigration) and backfill display names before the read
@@ -89,12 +103,8 @@ public sealed class AppHost : IDisposable
         DbPath = dbPath;
         Settings = settings;
         Actions = new LocalActions(
-            _host.Services.GetRequiredService<GameLogCollector>(),
-            _host.Services.GetRequiredService<SyncService>(),
-            store,
-            _host.Services.GetRequiredService<LogTailer>(),
-            settings,
-            settingsPath);
+            _host.Services.GetRequiredService<ControlService>(),
+            _host.Services.GetRequiredService<GameLogCollector>());
     }
 
     public void Dispose()

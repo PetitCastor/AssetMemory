@@ -1,3 +1,4 @@
+using AssetMemory.Collector.Control;
 using AssetMemory.Tui.Ui;
 using Terminal.Gui.App;
 
@@ -5,15 +6,16 @@ namespace AssetMemory.Tui;
 
 internal static class Program
 {
-    private const string WebBaseUrl = "http://localhost:9222";
-
     [STAThread]
     private static int Main()
     {
-        // Headless smoke test of the sole-instance wiring (DI host + DB + query surface + an action),
-        // for environments without an interactive terminal to drive the TUI. Renders nothing.
-        if (Environment.GetEnvironmentVariable("ASSETMEMORY_TUI_SELFTEST") == "1")
-            return SelfTest();
+        // Headless smoke tests for environments without an interactive terminal to drive the TUI.
+        switch (Environment.GetEnvironmentVariable("ASSETMEMORY_TUI_SELFTEST"))
+        {
+            case "1": return SelfTestSole();      // sole-instance wiring: host + DB + query + action
+            case "serve": return SelfTestServe(); // host + control pipe, held open briefly
+            case "viewer": return SelfTestViewer(); // connect to a running pipe and round-trip
+        }
 
         // Decide mode via the same single-instance mutex the tray/web app uses. If a background
         // AssetMemory already holds it, we attach as a read-only viewer and delegate writes over
@@ -33,20 +35,21 @@ internal static class Program
 
             if (backgroundRunning)
             {
-                HostInfo info;
+                var client = new ControlPipeClient();
+                ControlInfo info;
                 try
                 {
-                    info = HostInfo.Fetch(WebBaseUrl);
+                    info = client.Info();
                 }
                 catch (Exception ex)
                 {
                     Console.Error.WriteLine(
-                        $"A background AssetMemory is running but its control API at {WebBaseUrl} " +
-                        $"could not be reached ({ex.Message}). Close it and retry, or open the web UI instead.");
+                        "A background AssetMemory is running but its control pipe could not be reached " +
+                        $"({ex.Message}). It may still be starting up — retry in a moment.");
                     return 1;
                 }
                 dbPath = info.DbPath;
-                actions = new HttpActions(WebBaseUrl, info.GameLogPath);
+                actions = new PipeActions(client, info.GameLogPath);
             }
             else
             {
@@ -85,7 +88,7 @@ internal static class Program
         }
     }
 
-    private static int SelfTest()
+    private static int SelfTestSole()
     {
         using var host = new AppHost();
         using var read = new ReadStore(host.DbPath);
@@ -98,6 +101,30 @@ internal static class Program
 
         var bad = host.Actions.SetPath(Path.Combine(Path.GetTempPath(), "definitely-not-star-citizen"), false);
         Console.WriteLine($"SELFTEST setpath(bad).Ok={bad.Ok} err={bad.Error}");
+        return 0;
+    }
+
+    // Boots the collector + control pipe and holds it open briefly, so a separate viewer process can
+    // attach over the pipe. Exercises the TUI-as-server side of the fixed viewer-mode gap.
+    private static int SelfTestServe()
+    {
+        using var host = new AppHost();
+        Console.WriteLine($"SELFTEST serve: pipe up, dbPath={host.DbPath}. serving 8s...");
+        Thread.Sleep(TimeSpan.FromSeconds(8));
+        Console.WriteLine("SELFTEST serve: done");
+        return 0;
+    }
+
+    // Connects to whatever is serving the control pipe (web host or a sole-instance TUI) and
+    // round-trips a couple of requests. Exercises the viewer side.
+    private static int SelfTestViewer()
+    {
+        var client = new ControlPipeClient();
+        var info = client.Info();
+        Console.WriteLine($"SELFTEST viewer: connected. dbPath={info.DbPath} gameLog={info.GameLogPath ?? "(none)"}");
+
+        var bad = client.SetPath(Path.Combine(Path.GetTempPath(), "definitely-not-star-citizen"), false);
+        Console.WriteLine($"SELFTEST viewer: setpath(bad).Ok={bad.Ok} err={bad.Error}");
         return 0;
     }
 }

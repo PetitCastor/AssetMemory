@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using AssetMemory.Collector;
+using AssetMemory.Collector.Control;
 using AssetMemory.Core.Detection;
 using AssetMemory.Core.Resolution;
 using AssetMemory.Data;
@@ -84,6 +85,20 @@ internal static class Program
             settingsPath,
             sp.GetRequiredService<ILogger<SyncService>>()));
 
+        // Control channel — lets console-TUI viewers delegate writes to this collector-owning
+        // process over a local named pipe, keeping the collector's in-memory state consistent.
+        builder.Services.AddSingleton(sp => new ControlService(
+            sp.GetRequiredService<GameLogCollector>(),
+            sp.GetRequiredService<SyncService>(),
+            sp.GetRequiredService<AssetMemoryStore>(),
+            sp.GetRequiredService<LogTailer>(),
+            settings,
+            settingsPath,
+            dbPath));
+        builder.Services.AddHostedService(sp => new ControlPipeServer(
+            sp.GetRequiredService<ControlService>(),
+            sp.GetRequiredService<ILogger<ControlPipeServer>>()));
+
         builder.WebHost.ConfigureKestrel(k =>
         {
             k.ListenLocalhost(port);
@@ -107,44 +122,6 @@ internal static class Program
         app.MapStaticAssets();
         app.MapRazorComponents<App>()
             .AddInteractiveServerRenderMode();
-
-        // Local control endpoints — let the console TUI (viewer mode) delegate writes to this
-        // collector-owning process so cross-process state stays consistent. Localhost only.
-        app.MapGet("/api/info", () => Results.Json(new
-        {
-            dbPath,
-            gameLogPath = settings.GameLogPath,
-        }));
-
-        app.MapPost("/api/sync", () =>
-            Results.Json(app.Services.GetRequiredService<SyncService>().Sync())).DisableAntiforgery();
-
-        app.MapPost("/api/clear", () =>
-        {
-            var col = app.Services.GetRequiredService<GameLogCollector>();
-            var st = app.Services.GetRequiredService<AssetMemoryStore>();
-            col.StartFresh(() => st.ClearAll());
-            settings.ProcessedBackups.Clear();
-            settings.Save(settingsPath);
-            return Results.Ok();
-        }).DisableAntiforgery();
-
-        app.MapPost("/api/path", (SetPathRequest req) =>
-        {
-            var resolved = GamePathFinder.FindGameLogInFolder(req.Folder);
-            if (resolved is null && GamePathFinder.IsValidGameLog(req.Folder))
-                resolved = Path.GetFullPath(req.Folder);
-            if (resolved is null)
-                return Results.BadRequest(new { error = "Game.log not found at that location." });
-
-            settings.GameLogPath = resolved;
-            settings.Save(settingsPath);
-            var tailer = app.Services.GetRequiredService<LogTailer>();
-            tailer.SetPath(resolved);
-            if (req.StartFresh)
-                tailer.SeekToEnd();
-            return Results.Json(new { path = resolved });
-        }).DisableAntiforgery();
 
         // Start Kestrel without blocking, then hand this STA thread to the tray message loop.
         // The collector runs as a hosted background service, so capture continues while the tray
@@ -170,6 +147,3 @@ internal static class Program
         }
     }
 }
-
-/// <summary>Body for <c>POST /api/path</c> — the folder to search for Game.log, plus whether to skip history.</summary>
-internal sealed record SetPathRequest(string Folder, bool StartFresh);

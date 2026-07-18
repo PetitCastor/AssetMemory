@@ -78,9 +78,10 @@ dotnet run --project src/AssetMemory.Tui
 
 It picks its mode automatically via the shared single-instance lock:
 - **Standalone** (no other AssetMemory running) — it hosts the collector itself and owns its data.
-- **Viewer** (a background AssetMemory/tray app is already running) — it opens that instance's database
+- **Viewer** (a background AssetMemory is already running) — it opens that instance's database
   read-only for live viewing and delegates writes (sync / start-fresh / change-folder) to the running
-  host over its localhost control API (`/api/info`, `/api/sync`, `/api/clear`, `/api/path`).
+  host over a local **named pipe** (`AssetMemory.Control`). The pipe is served by *whichever* process
+  owns the collector — the Blazor/tray host **or** another standalone TUI — so viewers attach to either.
 
 Best experience in Windows Terminal (mouse + 24-bit color); works in legacy conhost too.
 
