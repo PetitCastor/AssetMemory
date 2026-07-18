@@ -23,6 +23,9 @@ if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed (exit $LASTEXITCODE)" }
 
 $exe = Join-Path $publishDir 'AssetMemory.exe'
 if (-not (Test-Path $exe)) { throw "Expected exe not found at $exe" }
+
+$icon = Join-Path $project 'app.ico'
+if (Test-Path $icon) { Copy-Item $icon $publishDir -Force }
 $sizeMb = [math]::Round((Get-Item $exe).Length / 1MB, 1)
 Write-Host "Published: $publishDir  (AssetMemory.exe = $sizeMb MB)" -ForegroundColor Green
 
