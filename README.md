@@ -71,8 +71,10 @@ no web stack. Because it has no `wwwroot`, the published build is a genuine **si
 
 ```
 dotnet run --project src/AssetMemory.Tui
-./publish-tui.ps1                 # -> dist/AssetMemory-Tui-win-x64.zip (single AssetMemory.Tui.exe)
+./publish.ps1 -TuiOnly            # -> dist/AssetMemory-Tui-win-x64.zip (single AssetMemory.Tui.exe)
 ```
+
+`./publish.ps1` with no switches builds **both** editions; `-WebOnly` / `-TuiOnly` pick one.
 
 It picks its mode automatically via the shared single-instance lock:
 - **Standalone** (no other AssetMemory running) — it hosts the collector itself and owns its data.
