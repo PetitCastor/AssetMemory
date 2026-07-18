@@ -63,6 +63,25 @@ Notes:
 - The exe is unsigned, so Windows SmartScreen may warn on first run ("More info" → "Run anyway"). Code-signing is a future step.
 - Drop an `app.ico` next to the exe to replace the default tray icon — it's picked up automatically.
 
+## Console (TUI) edition
+
+`src/AssetMemory.Tui` is an alternative, **terminal** front-end (Terminal.Gui) over the same
+Core/Data/Collector layer — a live, filterable, sortable, paged inventory table with no browser and
+no web stack. Because it has no `wwwroot`, the published build is a genuine **single-file** exe.
+
+```
+dotnet run --project src/AssetMemory.Tui
+./publish-tui.ps1                 # -> dist/AssetMemory-Tui-win-x64.zip (single AssetMemory.Tui.exe)
+```
+
+It picks its mode automatically via the shared single-instance lock:
+- **Standalone** (no other AssetMemory running) — it hosts the collector itself and owns its data.
+- **Viewer** (a background AssetMemory/tray app is already running) — it opens that instance's database
+  read-only for live viewing and delegates writes (sync / start-fresh / change-folder) to the running
+  host over its localhost control API (`/api/info`, `/api/sync`, `/api/clear`, `/api/path`).
+
+Best experience in Windows Terminal (mouse + 24-bit color); works in legacy conhost too.
+
 ---
 
 *No items were harmed in the making of this tracker. Several were, however, finally located.*

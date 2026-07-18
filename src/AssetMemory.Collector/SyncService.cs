@@ -1,8 +1,13 @@
-using AssetMemory.Collector;
 using AssetMemory.Core.Detection;
+using Microsoft.Extensions.Logging;
 
-namespace AssetMemory.UI.Services;
+namespace AssetMemory.Collector;
 
+/// <summary>
+/// Re-reads the current Game.log from the top and folds in any not-yet-processed backup logs,
+/// applying every parsed event through the collector. Shared by both front-ends (Blazor UI and
+/// the console TUI) so the "sync backups" action behaves identically regardless of presentation.
+/// </summary>
 public sealed class SyncService
 {
     private readonly GameLogCollector _collector;
