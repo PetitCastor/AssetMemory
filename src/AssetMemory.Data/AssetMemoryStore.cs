@@ -39,6 +39,7 @@ public sealed class AssetMemoryStore
             CREATE TABLE IF NOT EXISTS locations (
                 id            INTEGER PRIMARY KEY,
                 label         TEXT,
+                parent_id     INTEGER,
                 last_seen_utc TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS items (
@@ -72,7 +73,29 @@ public sealed class AssetMemoryStore
                 raw  TEXT NOT NULL
             );
             """);
+
+        // v1 -> v2: the place->container hierarchy adds locations.parent_id. Fresh DBs get it from
+        // the CREATE above; older v1 DBs are upgraded in place here. Idempotent: guarded on presence.
+        if (!ColumnExists("locations", "parent_id"))
+            Exec("ALTER TABLE locations ADD COLUMN parent_id INTEGER;");
+
         Exec($"PRAGMA user_version = {CurrentSchemaVersion};");
+    }
+
+    /// <summary>True if <paramref name="table"/> already has a column named <paramref name="column"/>.</summary>
+    private bool ColumnExists(string table, string column)
+    {
+        // table/column are internal literals, never user input — safe to interpolate (PRAGMA
+        // table_info does not accept a bound parameter for its argument).
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = $"PRAGMA table_info({table});";
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            if (string.Equals(r.GetString(1), column, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
     }
 
     // -------- batching --------
@@ -103,6 +126,30 @@ public sealed class AssetMemoryStore
             """;
         cmd.Parameters.AddWithValue("$id", id);
         cmd.Parameters.AddWithValue("$label", (object?)label ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$utc", FormatUtc(lastSeenUtc));
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Upserts a container row (a box nested inside a place). Like <see cref="UpsertLocation"/> but
+    /// also records the <paramref name="parentId"/> place it sits in. Both the label and the parent
+    /// are written with COALESCE so a null label / non-positive parent never clobbers identity a
+    /// previous line already established -- a later bare open of the same box is a no-op on both.
+    /// </summary>
+    public void UpsertContainer(long id, long parentId, DateTimeOffset lastSeenUtc, string? label)
+    {
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO locations (id, label, parent_id, last_seen_utc)
+            VALUES ($id, $label, $parent, $utc)
+            ON CONFLICT(id) DO UPDATE SET
+                last_seen_utc = excluded.last_seen_utc,
+                label         = COALESCE(excluded.label, label),
+                parent_id     = COALESCE(excluded.parent_id, parent_id);
+            """;
+        cmd.Parameters.AddWithValue("$id", id);
+        cmd.Parameters.AddWithValue("$label", (object?)label ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$parent", parentId > 0 ? parentId : (object)DBNull.Value);
         cmd.Parameters.AddWithValue("$utc", FormatUtc(lastSeenUtc));
         cmd.ExecuteNonQuery();
     }
@@ -354,6 +401,7 @@ public sealed class AssetMemoryStore
             JOIN locations l ON l.id = h.location_id
             WHERE l.label IS NOT NULL
               AND ($loc IS NULL OR h.location_id = $loc)
+              AND ($loc IS NOT NULL OR l.parent_id IS NULL)
               AND ($term IS NULL OR i.display_name LIKE $term OR i.class_name LIKE $term)
             """;
 
@@ -422,6 +470,56 @@ public sealed class AssetMemoryStore
             WHERE l.label IS NOT NULL
             ORDER BY l.label;
             """;
+        using var r = cmd.ExecuteReader();
+        var list = new List<LocationRow>();
+        while (r.Read())
+            list.Add(new LocationRow(r.GetInt64(0), r.GetString(1), ParseUtc(r.GetString(2))));
+        return list;
+    }
+
+    /// <summary>
+    /// Labelled places (<c>parent_id IS NULL</c>) that either hold items directly or have a child
+    /// container that does -- backs the top place dropdown. A place whose only holdings live inside
+    /// a box still appears here so the user can drill into it.
+    /// </summary>
+    public IEnumerable<LocationRow> GetPlacesWithHoldings()
+    {
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT l.id, l.label, l.last_seen_utc
+            FROM locations l
+            WHERE l.label IS NOT NULL
+              AND l.parent_id IS NULL
+              AND (EXISTS (SELECT 1 FROM holdings h WHERE h.location_id = l.id)
+                OR EXISTS (SELECT 1 FROM locations c
+                           JOIN holdings hc ON hc.location_id = c.id
+                           WHERE c.parent_id = l.id))
+            ORDER BY l.label;
+            """;
+        using var r = cmd.ExecuteReader();
+        var list = new List<LocationRow>();
+        while (r.Read())
+            list.Add(new LocationRow(r.GetInt64(0), r.GetString(1), ParseUtc(r.GetString(2))));
+        return list;
+    }
+
+    /// <summary>
+    /// Labelled containers (<c>parent_id = placeId</c>) sitting at <paramref name="placeId"/> that
+    /// currently hold at least one item -- backs the second (container) dropdown. Empty when the
+    /// place has no stocked boxes, in which case the UI need not render the dropdown at all.
+    /// </summary>
+    public IEnumerable<LocationRow> GetContainersForPlace(long placeId)
+    {
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT DISTINCT l.id, l.label, l.last_seen_utc
+            FROM locations l
+            JOIN holdings h ON h.location_id = l.id
+            WHERE l.label IS NOT NULL
+              AND l.parent_id = $place
+            ORDER BY l.label;
+            """;
+        cmd.Parameters.AddWithValue("$place", placeId);
         using var r = cmd.ExecuteReader();
         var list = new List<LocationRow>();
         while (r.Read())

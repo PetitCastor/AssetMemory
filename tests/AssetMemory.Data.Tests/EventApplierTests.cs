@@ -214,7 +214,8 @@ public class EventApplierTests
             var applier = ApplierFor(store);
             applier.Apply(new ContainerIdentifiedEvent(
                 T0, ContainerId: 681562156430,
-                ContainerClass: "Carryable_TBO_InventoryContainer_2SCU", ScuSize: 2));
+                ContainerClass: "Carryable_TBO_InventoryContainer_2SCU", ScuSize: 2,
+                ParentLocationId: 141810852));
             applier.Apply(new ItemMovedEvent(T0.AddSeconds(1),
                 "Arcadiius", "behr_shotgun_ballistic_01", 1,
                 new InventoryRef(204821708183, InventoryKind.Location, 141810852, "204821708183:Location:141810852"),
@@ -226,6 +227,12 @@ public class EventApplierTests
             Assert.Equal("Stor-All 2 SCU", store.GetLocation(681562156430)!.Label);
             var item = store.GetItem("behr_shotgun_ballistic_01")!;
             Assert.Equal(1, store.GetHolding(681562156430, item.Id)!.Quantity);
+
+            // The box nests under its place: reachable via the container dropdown query...
+            var boxes = store.GetContainersForPlace(141810852).ToList();
+            Assert.Equal(681562156430, Assert.Single(boxes).Id);
+            // ...and its units are excluded from the "all locations" aggregate (container-held).
+            Assert.Equal(0, store.GetHoldingDetailsPage(null, null, "item", true, 1, 50).TotalUnits);
         }
     }
 
@@ -245,7 +252,7 @@ public class EventApplierTests
             Assert.Null(store.GetLocation(681562156430)!.Label);
 
             applier.Apply(new ContainerIdentifiedEvent(
-                T0.AddSeconds(1), 681562156430, "Carryable_TBO_InventoryContainer_8SCU", 8));
+                T0.AddSeconds(1), 681562156430, "Carryable_TBO_InventoryContainer_8SCU", 8, 141810852));
 
             Assert.Equal("Stor-All 8 SCU", store.GetLocation(681562156430)!.Label);
             var item = store.GetItem("behr_shotgun_ballistic_01")!;
@@ -261,7 +268,7 @@ public class EventApplierTests
         {
             var applier = ApplierFor(store);
             applier.Apply(new ContainerIdentifiedEvent(
-                T0, 681562156430, "Carryable_TBO_InventoryContainer_2SCU", 2));
+                T0, 681562156430, "Carryable_TBO_InventoryContainer_2SCU", 2, 141810852));
             // A subsequent move upserts the same location with a null label — COALESCE must keep it.
             applier.Apply(new ItemMovedEvent(T0.AddSeconds(1),
                 "Arcadiius", "behr_shotgun_ballistic_01", 1,

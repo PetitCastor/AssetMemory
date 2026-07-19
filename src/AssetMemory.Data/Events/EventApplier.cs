@@ -113,9 +113,15 @@ public sealed class EventApplier
             string.IsNullOrEmpty(label) ? null : label);
     }
 
-    // Labels the box's holdings key (its GEID) so its contents surface in the station-only view,
-    // which shows a location only once it has a non-null label.
+    // Labels the box's holdings key (its GEID) so its contents surface, and records the place it
+    // sits in so it nests under that place. When the open line carried no parent location
+    // (ParentLocationId == 0) we fall back to a bare label so the box still surfaces on its own.
     private void ApplyContainerIdentified(ContainerIdentifiedEvent container)
-        => _store.UpsertLocation(container.ContainerId, container.Timestamp,
-            $"Stor-All {container.ScuSize} SCU");
+    {
+        var label = $"Stor-All {container.ScuSize} SCU";
+        if (container.ParentLocationId > 0)
+            _store.UpsertContainer(container.ContainerId, container.ParentLocationId, container.Timestamp, label);
+        else
+            _store.UpsertLocation(container.ContainerId, container.Timestamp, label);
+    }
 }

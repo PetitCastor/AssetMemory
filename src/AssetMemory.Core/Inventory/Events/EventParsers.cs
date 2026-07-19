@@ -253,6 +253,7 @@ public sealed partial class NestedContainerParser : IInventoryEventParser
 
     private long _pendingSize;
     private string? _pendingClass;
+    private long _pendingParent;
     private DateTimeOffset _pendingAt;
 
     public bool TryParse(LogEntry entry, [NotNullWhen(true)] out InventoryEvent? ev)
@@ -268,6 +269,13 @@ public sealed partial class NestedContainerParser : IInventoryEventParser
             {
                 _pendingClass = cls;
                 _pendingSize = size;
+                // The open line carries the place the box sits at (never the box's own GEID) as its
+                // Source Inventory location ref; stash its place id so the box nests under it.
+                _pendingParent =
+                    InventoryRef.TryParse(LogFields.Get(entry.Message, "Source Inventory"), out var src)
+                    && src.Kind == InventoryKind.Location
+                        ? src.Id
+                        : 0;
                 _pendingAt = entry.Timestamp;
             }
             return false; // class stashed; the GEID (and the event) comes on the paired line.
@@ -285,10 +293,12 @@ public sealed partial class NestedContainerParser : IInventoryEventParser
 
         var pendingClass = _pendingClass;
         var pendingSize = _pendingSize;
+        var pendingParent = _pendingParent;
         _pendingClass = null;
+        _pendingParent = 0;
 
         // A container ref keys off its owning GEID (the 1st field); the Id (3rd field) is 0 here.
-        ev = new ContainerIdentifiedEvent(entry.Timestamp, inv.Owner, pendingClass, (int)pendingSize);
+        ev = new ContainerIdentifiedEvent(entry.Timestamp, inv.Owner, pendingClass, (int)pendingSize, pendingParent);
         return true;
     }
 
