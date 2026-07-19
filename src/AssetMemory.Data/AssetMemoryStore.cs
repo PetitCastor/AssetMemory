@@ -10,7 +10,7 @@ namespace AssetMemory.Data;
 /// </summary>
 public sealed class AssetMemoryStore
 {
-    private const int CurrentSchemaVersion = 1;
+    private const int CurrentSchemaVersion = 2;
 
     private readonly SqliteConnection _conn;
 
