@@ -31,3 +31,4 @@ assetmemory.db-shm
 
 ## Claude Code
 .claude/
+.rtk/
