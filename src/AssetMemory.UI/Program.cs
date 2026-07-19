@@ -125,10 +125,9 @@ internal static class Program
 
         // Start Kestrel without blocking, then hand this STA thread to the tray message loop.
         // The collector runs as a hosted background service, so capture continues while the tray
-        // sits idle. ASSETMEMORY_NO_BROWSER lets tests/headless launches skip the auto-open.
+        // sits idle. No auto-opened browser: the app starts hidden in the tray, like a background
+        // service, until the user picks "Open AssetMemory" or double-clicks the icon.
         app.Start();
-        if (Environment.GetEnvironmentVariable("ASSETMEMORY_NO_BROWSER") is null)
-            OpenBrowser(url);
 
         TrayApp.Run(url); // blocks until the user picks Exit from the tray menu
 
