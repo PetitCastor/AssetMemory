@@ -22,6 +22,10 @@ public sealed class InventoryEventParser
 
     public static IReadOnlyList<IInventoryEventParser> DefaultParsers() =>
     [
+        // Must precede ContainerOpenedParser: it stashes the box class off the OpenNestedInventory
+        // line (returning false so ContainerOpenedParser still emits its open event) and identifies
+        // the box on the paired numeric-ref query.
+        new NestedContainerParser(),
         new ContainerOpenedParser(),
         new MoveEventParser(),
         new GridItemCountParser(),

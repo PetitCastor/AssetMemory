@@ -206,6 +206,74 @@ public class EventApplierTests
     }
 
     [Fact]
+    public void Container_identified_labels_the_box_geid_so_its_holdings_surface()
+    {
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            var applier = ApplierFor(store);
+            applier.Apply(new ContainerIdentifiedEvent(
+                T0, ContainerId: 681562156430,
+                ContainerClass: "Carryable_TBO_InventoryContainer_2SCU", ScuSize: 2));
+            applier.Apply(new ItemMovedEvent(T0.AddSeconds(1),
+                "Arcadiius", "behr_shotgun_ballistic_01", 1,
+                new InventoryRef(204821708183, InventoryKind.Location, 141810852, "204821708183:Location:141810852"),
+                new InventoryRef(681562156430, InventoryKind.Container, 0, "681562156430:Container:0"),
+                1));
+
+            // A container ref keys off its owning GEID; the box carries a label so the UI shows it,
+            // and the moved item lands there.
+            Assert.Equal("Stor-All 2 SCU", store.GetLocation(681562156430)!.Label);
+            var item = store.GetItem("behr_shotgun_ballistic_01")!;
+            Assert.Equal(1, store.GetHolding(681562156430, item.Id)!.Quantity);
+        }
+    }
+
+    [Fact]
+    public void Container_identified_after_a_move_labels_the_already_created_box_row()
+    {
+        // Moves seed the box row with a null label first; identification then names it in place.
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            var applier = ApplierFor(store);
+            applier.Apply(new ItemMovedEvent(T0,
+                "Arcadiius", "behr_shotgun_ballistic_01", 1,
+                new InventoryRef(204821708183, InventoryKind.Location, 141810852, "204821708183:Location:141810852"),
+                new InventoryRef(681562156430, InventoryKind.Container, 0, "681562156430:Container:0"),
+                1));
+            Assert.Null(store.GetLocation(681562156430)!.Label);
+
+            applier.Apply(new ContainerIdentifiedEvent(
+                T0.AddSeconds(1), 681562156430, "Carryable_TBO_InventoryContainer_8SCU", 8));
+
+            Assert.Equal("Stor-All 8 SCU", store.GetLocation(681562156430)!.Label);
+            var item = store.GetItem("behr_shotgun_ballistic_01")!;
+            Assert.Equal(1, store.GetHolding(681562156430, item.Id)!.Quantity);  // holding preserved
+        }
+    }
+
+    [Fact]
+    public void A_later_move_does_not_wipe_an_identified_box_label()
+    {
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            var applier = ApplierFor(store);
+            applier.Apply(new ContainerIdentifiedEvent(
+                T0, 681562156430, "Carryable_TBO_InventoryContainer_2SCU", 2));
+            // A subsequent move upserts the same location with a null label — COALESCE must keep it.
+            applier.Apply(new ItemMovedEvent(T0.AddSeconds(1),
+                "Arcadiius", "behr_shotgun_ballistic_01", 1,
+                new InventoryRef(681562156430, InventoryKind.Container, 0, "681562156430:Container:0"),
+                new InventoryRef(204821708183, InventoryKind.Location, 141810852, "204821708183:Location:141810852"),
+                1));
+
+            Assert.Equal("Stor-All 2 SCU", store.GetLocation(681562156430)!.Label);
+        }
+    }
+
+    [Fact]
     public void GridItemCount_is_ignored_without_error()
     {
         var (store, conn) = TestStore.CreateMigrated();
