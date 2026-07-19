@@ -165,6 +165,28 @@ public class EventParserTests
         Assert.Equal("Stanton4_NewBabbage", s.StationCode);
     }
 
+    // Current game builds tag the numeric-ref line "<Query Inventory>" instead of the older
+    // "<RequestInventory>"; identification must still pair off it. (Regression: the whole
+    // station-only inventory view was empty because this token was not recognised.)
+    private const string NyxLocLine =
+        "<2026-07-19T00:05:31.512Z> [Notice] <RequestLocationInventory> Player[Arcadiius] requested inventory for Location[RR_JP_NyxCastra] [Team_CoreGameplayFeatures][Inventory]";
+    private const string NyxQueryInvLine =
+        "<2026-07-19T00:05:31.513Z> [Notice] <Query Inventory> Request[31] Inventory[204821708183:Location:141810852] [Team_CoreGameplayFeatures][Inventory]";
+
+    [Fact]
+    public void Station_pairs_with_current_query_inventory_token()
+    {
+        var parser = new StationInventoryParser();
+
+        Assert.False(parser.TryParse(Entry(NyxLocLine), out _));
+        Assert.True(parser.TryParse(Entry(NyxQueryInvLine), out var ev));
+
+        var s = Assert.IsType<StationIdentifiedEvent>(ev);
+        Assert.Equal("Arcadiius", s.Player);
+        Assert.Equal(141810852, s.PlaceId);
+        Assert.Equal("RR_JP_NyxCastra", s.StationCode);
+    }
+
     [Fact]
     public void Station_ignores_a_bare_container_request_inventory()
     {

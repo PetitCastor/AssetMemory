@@ -164,16 +164,22 @@ public sealed partial class ContainerClosedParser : IInventoryEventParser
 /// <summary>
 /// Stateful: recognises a station's persistent local inventory by pairing a
 /// <c>&lt;RequestLocationInventory&gt;</c> line (carries the readable code) with the
-/// <c>&lt;RequestInventory&gt;</c> line that immediately follows it (carries the numeric
-/// <c>GEID:Location:placeId</c> ref). The first line stashes state and reports no event;
-/// the second emits a <see cref="StationIdentifiedEvent"/>.
+/// numeric-ref line that immediately follows it (carries the <c>GEID:Location:placeId</c> ref).
+/// The first line stashes state and reports no event; the second emits a
+/// <see cref="StationIdentifiedEvent"/>.
 ///
-/// This is the gate that separates stations from the ~158k container opens that share the
-/// <c>RequestInventory</c> category: a bare <c>RequestInventory</c> with no pending
-/// location-request is ignored. Lines are processed in log order on a single thread.
+/// The follow-up line's category has drifted across game versions: older logs tag it
+/// <c>&lt;RequestInventory&gt;</c>, current builds tag it <c>&lt;Query Inventory&gt;</c>. Both are
+/// accepted. This is the gate that separates stations from the many container opens that share
+/// those categories: a bare line with no pending location-request is ignored, and only a
+/// <c>:Location:</c> ref qualifies. Lines are processed in log order on a single thread.
 /// </summary>
 public sealed class StationInventoryParser : IInventoryEventParser
 {
+    // The game renamed this log category from "RequestInventory" to "Query Inventory"; accept both
+    // so identification keeps working across builds.
+    private static readonly string[] NumericRefCategories = ["RequestInventory", "Query Inventory"];
+
     // The two lines are always adjacent and share a timestamp to within ~1ms; anything beyond
     // this window means the pending request was dangling (e.g. across a file/tick boundary).
     private static readonly TimeSpan PairWindow = TimeSpan.FromSeconds(1);
@@ -198,7 +204,7 @@ public sealed class StationInventoryParser : IInventoryEventParser
             return false; // state stashed; the event comes on the paired line.
         }
 
-        if (entry.Category != "RequestInventory")
+        if (Array.IndexOf(NumericRefCategories, entry.Category) < 0)
             return false;
 
         if (_pendingCode is null || entry.Timestamp - _pendingAt > PairWindow)
