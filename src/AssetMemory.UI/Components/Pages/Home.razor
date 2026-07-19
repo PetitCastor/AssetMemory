@@ -64,14 +64,27 @@
         <div class="toolbar">
             <div class="filter-group">
                 <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
-                <select @bind="SelectedLocation">
+                <select @bind="SelectedPlace">
                     <option value="">All locations</option>
-                    @foreach (var loc in Locations)
+                    @foreach (var p in Places)
                     {
-                        <option value="@loc.Id">@(loc.Label ?? $"Location {loc.Id}")</option>
+                        <option value="@p.Id">@(p.Label ?? $"Location {p.Id}")</option>
                     }
                 </select>
             </div>
+            @if (Containers.Count > 0)
+            {
+                <div class="filter-group">
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+                    <select @bind="SelectedContainer">
+                        <option value="">(local storage)</option>
+                        @foreach (var c in Containers)
+                        {
+                            <option value="@c.Id">@(c.Label ?? $"Container {c.Id}")</option>
+                        }
+                    </select>
+                </div>
+            }
             <div class="filter-group search">
                 <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
                 <input type="text" placeholder="Search items..." @bind="SearchTerm" @bind:event="oninput" />
@@ -235,7 +248,8 @@
     private static readonly int[] PageSizeOptions = [10, 25, 50, 100];
 
     private HoldingDetailsPage _pageResult = new([], 0, 0, 0);
-    private List<LocationRow> Locations = [];
+    private List<LocationRow> Places = [];
+    private List<LocationRow> Containers = [];
 
     private string _searchTerm = "";
     private string SearchTerm
@@ -244,11 +258,21 @@
         set { _searchTerm = value; _page = 1; LoadData(); }
     }
 
-    private string _selectedLocation = "";
-    private string SelectedLocation
+    // The top dropdown picks a place (station / local storage); when that place has stocked
+    // containers a second dropdown appears to drill into one. Changing the place clears any
+    // container selection since it no longer applies.
+    private string _selectedPlace = "";
+    private string SelectedPlace
     {
-        get => _selectedLocation;
-        set { _selectedLocation = value; _page = 1; LoadData(); }
+        get => _selectedPlace;
+        set { _selectedPlace = value; _selectedContainer = ""; _page = 1; LoadData(); }
+    }
+
+    private string _selectedContainer = "";
+    private string SelectedContainer
+    {
+        get => _selectedContainer;
+        set { _selectedContainer = value; _page = 1; LoadData(); }
     }
 
     private string SortColumn { get; set; } = "item";
@@ -395,13 +419,19 @@
 
     private void LoadData()
     {
-        long? locId = long.TryParse(SelectedLocation, out var parsed) ? parsed : null;
+        // Filter to the chosen container if one is picked, otherwise the chosen place; empty = all
+        // places (the aggregate excludes container-held units, so boxes never double-count here).
+        long? locId =
+            long.TryParse(SelectedContainer, out var cid) ? cid :
+            long.TryParse(SelectedPlace, out var pid) ? pid :
+            null;
         var term = string.IsNullOrWhiteSpace(SearchTerm) ? null : SearchTerm.Trim();
 
-        // Station inventories only — a resolved label marks a place we can name (New Babbage,
-        // Lorville, …). Container-held items (backpacks, SCU boxes, worn armor) stay hidden for now.
         _pageResult = Store.GetHoldingDetailsPage(locId, term, SortColumn, SortAsc, _page, _pageSize);
-        Locations = Store.GetLocationsWithHoldings().ToList();
+        Places = Store.GetPlacesWithHoldings().ToList();
+        Containers = long.TryParse(SelectedPlace, out var placeId)
+            ? Store.GetContainersForPlace(placeId).ToList()
+            : [];
     }
 
     private void GoToPage(int page)
