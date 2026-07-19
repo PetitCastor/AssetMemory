@@ -419,18 +419,15 @@
 
     private void LoadData()
     {
-        // Filter to the chosen container if one is picked, otherwise the chosen place; empty = all
-        // places (the aggregate excludes container-held units, so boxes never double-count here).
-        long? locId =
-            long.TryParse(SelectedContainer, out var cid) ? cid :
-            long.TryParse(SelectedPlace, out var pid) ? pid :
-            null;
+        long? placeId = long.TryParse(SelectedPlace, out var pid) ? pid : null;
+        long? containerId = long.TryParse(SelectedContainer, out var cid) ? cid : null;
         var term = string.IsNullOrWhiteSpace(SearchTerm) ? null : SearchTerm.Trim();
 
-        _pageResult = Store.GetHoldingDetailsPage(locId, term, SortColumn, SortAsc, _page, _pageSize);
+        // A place rolls up its containers' contents; a chosen container narrows to just that box.
+        _pageResult = Store.GetHoldingDetailsPage(placeId, containerId, term, SortColumn, SortAsc, _page, _pageSize);
         Places = Store.GetPlacesWithHoldings().ToList();
-        Containers = long.TryParse(SelectedPlace, out var placeId)
-            ? Store.GetContainersForPlace(placeId).ToList()
+        Containers = placeId is not null
+            ? Store.GetContainersForPlace(placeId.Value).ToList()
             : [];
     }
 

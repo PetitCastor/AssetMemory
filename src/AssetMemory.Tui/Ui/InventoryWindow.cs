@@ -232,9 +232,8 @@ public sealed class InventoryWindow : Window
     {
         var term = string.IsNullOrWhiteSpace(_searchTerm) ? null : _searchTerm.Trim();
 
-        // Filter to the chosen container if one is picked, otherwise the chosen place; null = all.
-        var effectiveLoc = _selectedContainerId ?? _selectedPlaceId;
-        _pageResult = _store.GetHoldingDetailsPage(effectiveLoc, term, _sortColumn, _sortAsc, _page, _pageSize);
+        // A place rolls up its containers' contents; a chosen container narrows to just that box.
+        _pageResult = _store.GetHoldingDetailsPage(_selectedPlaceId, _selectedContainerId, term, _sortColumn, _sortAsc, _page, _pageSize);
         _places = _store.GetPlacesWithHoldings().ToList();
         _containers = _selectedPlaceId is { } placeId
             ? _store.GetContainersForPlace(placeId).ToList()

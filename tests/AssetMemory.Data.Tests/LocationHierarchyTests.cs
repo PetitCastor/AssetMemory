@@ -82,28 +82,31 @@ public class LocationHierarchyTests
     }
 
     [Fact]
-    public void GetHoldingDetailsPage_all_locations_counts_place_direct_units_only()
+    public void GetHoldingDetailsPage_all_locations_rolls_up_place_and_container_units()
     {
         var (store, conn) = TestStore.CreateMigrated();
         using (conn)
         {
             Seed(store);
-            // null filter = "All locations": place-direct 5 units, container 3 units excluded.
-            var all = store.GetHoldingDetailsPage(null, null, "item", true, 1, 50);
-            Assert.Equal(5, all.TotalUnits);
-            Assert.Equal(1, all.DistinctLocations);
+            // "All locations" = everything: 5 place-direct + 3 in the box = 8, across 2 locations.
+            var all = store.GetHoldingDetailsPage(null, null, null, "item", true, 1, 50);
+            Assert.Equal(8, all.TotalUnits);
+            Assert.Equal(2, all.DistinctLocations);
         }
     }
 
     [Fact]
-    public void GetHoldingDetailsPage_filtered_to_a_container_shows_its_own_contents()
+    public void GetHoldingDetailsPage_place_scope_rolls_up_boxes_but_container_scope_narrows()
     {
         var (store, conn) = TestStore.CreateMigrated();
         using (conn)
         {
             Seed(store);
-            Assert.Equal(3, store.GetHoldingDetailsPage(Box, null, "item", true, 1, 50).TotalUnits);
-            Assert.Equal(5, store.GetHoldingDetailsPage(Place, null, "item", true, 1, 50).TotalUnits);
+            // Place scope = its 5 direct units + the box's 3 = 8.
+            Assert.Equal(8, store.GetHoldingDetailsPage(Place, null, null, "item", true, 1, 50).TotalUnits);
+            // Container scope = only the box's 3, whether or not the place is also supplied.
+            Assert.Equal(3, store.GetHoldingDetailsPage(Place, Box, null, "item", true, 1, 50).TotalUnits);
+            Assert.Equal(3, store.GetHoldingDetailsPage(null, Box, null, "item", true, 1, 50).TotalUnits);
         }
     }
 

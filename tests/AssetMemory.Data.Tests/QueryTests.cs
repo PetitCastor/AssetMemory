@@ -98,13 +98,13 @@ public class QueryTests
         var (store, conn) = SeededForPaging();
         using (conn)
         {
-            var page1 = store.GetHoldingDetailsPage(null, null, "location", true, page: 1, pageSize: 2);
+            var page1 = store.GetHoldingDetailsPage(null, null, null, "location", true, page: 1, pageSize: 2);
             Assert.Equal(["Alpha", "Bravo"], page1.Rows.Select(r => r.LocationLabel));
 
-            var page2 = store.GetHoldingDetailsPage(null, null, "location", true, page: 2, pageSize: 2);
+            var page2 = store.GetHoldingDetailsPage(null, null, null, "location", true, page: 2, pageSize: 2);
             Assert.Equal(["Charlie", "Delta"], page2.Rows.Select(r => r.LocationLabel));
 
-            var page3 = store.GetHoldingDetailsPage(null, null, "location", true, page: 3, pageSize: 2);
+            var page3 = store.GetHoldingDetailsPage(null, null, null, "location", true, page: 3, pageSize: 2);
             Assert.Equal(["Echo"], page3.Rows.Select(r => r.LocationLabel));
         }
     }
@@ -115,7 +115,7 @@ public class QueryTests
         var (store, conn) = SeededForPaging();
         using (conn)
         {
-            var page = store.GetHoldingDetailsPage(null, null, "location", true, page: 1, pageSize: 2);
+            var page = store.GetHoldingDetailsPage(null, null, null, "location", true, page: 1, pageSize: 2);
 
             Assert.Equal(5, page.TotalCount);
             Assert.Equal(5, page.DistinctLocations);
@@ -130,7 +130,7 @@ public class QueryTests
         var (store, conn) = SeededForPaging();
         using (conn)
         {
-            var page = store.GetHoldingDetailsPage(null, null, "item", true, page: 1, pageSize: 5);
+            var page = store.GetHoldingDetailsPage(null, null, null, "item", true, page: 1, pageSize: 5);
             Assert.Equal(
                 ["Victor", "Whiskey", "Xray", "Yankee", "Zeta"],
                 page.Rows.Select(r => r.ItemDisplayName));
@@ -143,7 +143,7 @@ public class QueryTests
         var (store, conn) = SeededForPaging();
         using (conn)
         {
-            var page = store.GetHoldingDetailsPage(null, null, "qty", true, page: 1, pageSize: 5);
+            var page = store.GetHoldingDetailsPage(null, null, null, "qty", true, page: 1, pageSize: 5);
             Assert.Equal([1, 5, 10, 15, 20], page.Rows.Select(r => r.Quantity));
         }
     }
@@ -154,7 +154,7 @@ public class QueryTests
         var (store, conn) = SeededForPaging();
         using (conn)
         {
-            var page = store.GetHoldingDetailsPage(null, null, "qty", false, page: 1, pageSize: 5);
+            var page = store.GetHoldingDetailsPage(null, null, null, "qty", false, page: 1, pageSize: 5);
             Assert.Equal([20, 15, 10, 5, 1], page.Rows.Select(r => r.Quantity));
         }
     }
@@ -165,7 +165,7 @@ public class QueryTests
         var (store, conn) = SeededForPaging();
         using (conn)
         {
-            var page = store.GetHoldingDetailsPage(2, null, "location", true, page: 1, pageSize: 10);
+            var page = store.GetHoldingDetailsPage(2, null, null, "location", true, page: 1, pageSize: 10);
             Assert.Single(page.Rows);
             Assert.Equal("Bravo", page.Rows[0].LocationLabel);
             Assert.Equal(1, page.TotalCount);
@@ -178,11 +178,11 @@ public class QueryTests
         var (store, conn) = SeededForPaging();
         using (conn)
         {
-            var byDisplayName = store.GetHoldingDetailsPage(null, "yank", "location", true, 1, 10);
+            var byDisplayName = store.GetHoldingDetailsPage(null, null, "yank", "location", true, 1, 10);
             Assert.Single(byDisplayName.Rows);
             Assert.Equal("Yankee", byDisplayName.Rows[0].ItemDisplayName);
 
-            var byClassName = store.GetHoldingDetailsPage(null, "item_victor", "location", true, 1, 10);
+            var byClassName = store.GetHoldingDetailsPage(null, null, "item_victor", "location", true, 1, 10);
             Assert.Single(byClassName.Rows);
             Assert.Equal("Victor", byClassName.Rows[0].ItemDisplayName);
         }
@@ -198,7 +198,7 @@ public class QueryTests
             var helmet = store.EnsureItem("helmet_x", "Helmet X");
             store.AdjustHolding(999, helmet, 1, T0);
 
-            var page = store.GetHoldingDetailsPage(null, null, "location", true, page: 1, pageSize: 10);
+            var page = store.GetHoldingDetailsPage(null, null, null, "location", true, page: 1, pageSize: 10);
             Assert.Equal(5, page.TotalCount); // the unlabelled holding is not counted
             Assert.DoesNotContain(page.Rows, r => r.LocationId == 999);
         }
@@ -210,7 +210,7 @@ public class QueryTests
         var (store, conn) = SeededForPaging();
         using (conn)
         {
-            var page = store.GetHoldingDetailsPage(null, null, "location", true, page: 99, pageSize: 2);
+            var page = store.GetHoldingDetailsPage(null, null, null, "location", true, page: 99, pageSize: 2);
             Assert.Empty(page.Rows);
             Assert.Equal(5, page.TotalCount);
         }
@@ -223,7 +223,7 @@ public class QueryTests
         using (conn)
         {
             Assert.Throws<ArgumentException>(() =>
-                store.GetHoldingDetailsPage(null, null, "bogus", true, 1, 10));
+                store.GetHoldingDetailsPage(null, null, null, "bogus", true, 1, 10));
         }
     }
 

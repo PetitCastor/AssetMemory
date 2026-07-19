@@ -231,8 +231,9 @@ public class EventApplierTests
             // The box nests under its place: reachable via the container dropdown query...
             var boxes = store.GetContainersForPlace(141810852).ToList();
             Assert.Equal(681562156430, Assert.Single(boxes).Id);
-            // ...and its units are excluded from the "all locations" aggregate (container-held).
-            Assert.Equal(0, store.GetHoldingDetailsPage(null, null, "item", true, 1, 50).TotalUnits);
+            // ...and its units roll up into the place scope and the "all locations" aggregate.
+            Assert.Equal(1, store.GetHoldingDetailsPage(141810852, null, null, "item", true, 1, 50).TotalUnits);
+            Assert.Equal(1, store.GetHoldingDetailsPage(null, null, null, "item", true, 1, 50).TotalUnits);
         }
     }
 
@@ -277,6 +278,36 @@ public class EventApplierTests
                 1));
 
             Assert.Equal("Stor-All 2 SCU", store.GetLocation(681562156430)!.Label);
+        }
+    }
+
+    [Fact]
+    public void Items_moved_from_an_unlabelled_backpack_into_a_box_track_and_roll_up_under_the_place()
+    {
+        // Evaluation proof: moving OUT of a backpack (an unlabelled Container) INTO an identified
+        // box is tracked by the same ledger as any move -- the units land in the box and, because
+        // the box nests under its place, they stay visible in the place + all-locations rollup.
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            var applier = ApplierFor(store);
+            store.UpsertLocation(141810852, T0, "Nyx Castra Jump Point");        // the place
+            applier.Apply(new ContainerIdentifiedEvent(
+                T0, 681562156430, "Carryable_TBO_InventoryContainer_2SCU", 2, 141810852));  // box @ place
+            applier.Apply(new ItemMovedEvent(T0.AddSeconds(1),
+                "Arcadiius", "medpen", 2,
+                new InventoryRef(595318982158, InventoryKind.Container, 0, "595318982158:Container:0"), // backpack
+                new InventoryRef(681562156430, InventoryKind.Container, 0, "681562156430:Container:0"), // box
+                1));
+
+            var item = store.GetItem("medpen")!;
+            Assert.Equal(2, store.GetHolding(681562156430, item.Id)!.Quantity);   // landed in the box
+            Assert.Null(store.GetHolding(595318982158, item.Id));                 // not left in the backpack
+
+            // Visible in the place rollup, the box drill-down, and the all-locations aggregate.
+            Assert.Equal(2, store.GetHoldingDetailsPage(141810852, null, null, "item", true, 1, 50).TotalUnits);
+            Assert.Equal(2, store.GetHoldingDetailsPage(141810852, 681562156430, null, "item", true, 1, 50).TotalUnits);
+            Assert.Equal(2, store.GetHoldingDetailsPage(null, null, null, "item", true, 1, 50).TotalUnits);
         }
     }
 

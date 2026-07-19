@@ -382,26 +382,32 @@ public sealed class AssetMemoryStore
     }
 
     /// <summary>
-    /// Filtered, sorted, paged station-inventory rows (container-held items stay hidden for now,
-    /// same as <see cref="GetAllHoldingDetails"/>'s longstanding UI usage -- only locations with a
-    /// resolved label are real "places" worth showing). Filtering, sorting, and paging all happen
-    /// in SQL so the UI never has to load the whole holdings table to show one page of it.
+    /// Filtered, sorted, paged holding rows over labelled locations. Location scope rolls up:
+    /// <paramref name="containerId"/> set -> just that container; else <paramref name="placeId"/>
+    /// set -> that place's direct items PLUS every child container's contents; else both null ->
+    /// everything (places and containers). So an item moved into a box (from a backpack, local
+    /// storage, anywhere) still shows under its parent place, and narrowing to the box shows only
+    /// its contents. Filtering, sorting, and paging all happen in SQL so the UI never has to load
+    /// the whole holdings table to show one page of it.
     /// </summary>
     public HoldingDetailsPage GetHoldingDetailsPage(
-        long? locationId, string? searchTerm, string sortColumn, bool sortAscending, int page, int pageSize)
+        long? placeId, long? containerId, string? searchTerm, string sortColumn, bool sortAscending, int page, int pageSize)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(page, 1);
         ArgumentOutOfRangeException.ThrowIfLessThan(pageSize, 1);
         var sortExpr = SortExpression(sortColumn);
         var term = string.IsNullOrWhiteSpace(searchTerm) ? null : $"%{searchTerm}%";
 
+        // Scope precedence: a chosen container pins to itself; otherwise a chosen place includes its
+        // own rows and any container whose parent_id points back at it; otherwise no location filter.
         const string filterSql = """
             FROM holdings h
             JOIN items i ON i.id = h.item_id
             JOIN locations l ON l.id = h.location_id
             WHERE l.label IS NOT NULL
-              AND ($loc IS NULL OR h.location_id = $loc)
-              AND ($loc IS NOT NULL OR l.parent_id IS NULL)
+              AND ($container IS NULL OR h.location_id = $container)
+              AND ($container IS NOT NULL OR $place IS NULL
+                   OR h.location_id = $place OR l.parent_id = $place)
               AND ($term IS NULL OR i.display_name LIKE $term OR i.class_name LIKE $term)
             """;
 
@@ -410,7 +416,8 @@ public sealed class AssetMemoryStore
             SELECT COUNT(*), COUNT(DISTINCT h.location_id), COALESCE(SUM(h.quantity), 0)
             {filterSql};
             """;
-        countCmd.Parameters.AddWithValue("$loc", (object?)locationId ?? DBNull.Value);
+        countCmd.Parameters.AddWithValue("$place", (object?)placeId ?? DBNull.Value);
+        countCmd.Parameters.AddWithValue("$container", (object?)containerId ?? DBNull.Value);
         countCmd.Parameters.AddWithValue("$term", (object?)term ?? DBNull.Value);
         int totalCount; int distinctLocations; long totalUnits;
         using (var cr = countCmd.ExecuteReader())
@@ -430,7 +437,8 @@ public sealed class AssetMemoryStore
             ORDER BY {sortExpr} {(sortAscending ? "ASC" : "DESC")}
             LIMIT $take OFFSET $skip;
             """;
-        cmd.Parameters.AddWithValue("$loc", (object?)locationId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$place", (object?)placeId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$container", (object?)containerId ?? DBNull.Value);
         cmd.Parameters.AddWithValue("$term", (object?)term ?? DBNull.Value);
         cmd.Parameters.AddWithValue("$take", pageSize);
         cmd.Parameters.AddWithValue("$skip", (page - 1) * pageSize);
