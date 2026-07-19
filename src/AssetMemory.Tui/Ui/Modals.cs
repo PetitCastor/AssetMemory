@@ -42,6 +42,26 @@ internal static class Modals
         dialog.Dispose();
     }
 
+    /// <summary>Text prompt with an OK/Cancel pair. Returns the entered text on OK, or null if cancelled.</summary>
+    public static string? Prompt(string title, string message, string initial = "")
+    {
+        string? result = null;
+        var dialog = new Dialog { Title = title, Width = Dim.Percent(60), Height = 10 };
+
+        var label = new Label { X = 1, Y = 1, Width = Dim.Fill(1), Text = message };
+        var field = new TextField { X = 1, Y = 3, Width = Dim.Fill(2), Text = initial };
+        var ok = new Button { X = Pos.Center() - 12, Y = 6, Text = "OK", IsDefault = true };
+        var cancel = new Button { X = Pos.Center() + 2, Y = 6, Text = "Cancel" };
+
+        ok.Accepting += (_, _) => { result = field.Text ?? ""; Application.RequestStop(); };
+        cancel.Accepting += (_, _) => Application.RequestStop();
+
+        dialog.Add(label, field, ok, cancel);
+        Application.Run(dialog);
+        dialog.Dispose();
+        return result;
+    }
+
     /// <summary>Single-choice picker over a list. Returns the selected index, or -1 if cancelled.</summary>
     public static int ChooseFromList(string title, IReadOnlyList<string> items, int current)
     {

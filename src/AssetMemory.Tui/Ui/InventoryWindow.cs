@@ -87,6 +87,7 @@ public sealed class InventoryWindow : Window
         var syncBtn = new Button { X = Pos.Right(_nextBtn) + 3, Y = Pos.Bottom(_table) + 1, Text = "Sync backups" };
         var freshBtn = new Button { X = Pos.Right(syncBtn) + 1, Y = Pos.Bottom(_table) + 1, Text = "Start fresh" };
         var pathBtn = new Button { X = Pos.Right(freshBtn) + 1, Y = Pos.Bottom(_table) + 1, Text = "Change folder" };
+        var inceptionBtn = new Button { X = Pos.Right(pathBtn) + 1, Y = Pos.Bottom(_table) + 1, Text = "Sync from…" };
         _watchingLabel = new Label { X = 1, Y = Pos.Bottom(_table) + 2, Width = Dim.Fill(1), Text = "" };
 
         // --- Events ---
@@ -144,10 +145,12 @@ public sealed class InventoryWindow : Window
             }
         };
 
+        inceptionBtn.Accepting += (_, _) => PickInception();
+
         Add(searchLabel, _searchField, _locBtn, _containerBtn, _pageSizeBtn, refreshBtn,
             sortLabel, _itemSortBtn, _locSortBtn, _qtySortBtn, _seenSortBtn,
             _table,
-            _statusLabel, _prevBtn, _pageLabel, _nextBtn, syncBtn, freshBtn, pathBtn, _watchingLabel);
+            _statusLabel, _prevBtn, _pageLabel, _nextBtn, syncBtn, freshBtn, pathBtn, inceptionBtn, _watchingLabel);
 
         UpdateSortButtons();
         Reload();
@@ -228,6 +231,37 @@ public sealed class InventoryWindow : Window
         Reload();
     }
 
+    // Prompts for a sync-inception date (blank clears it), then rebuilds the DB under the new bound.
+    private void PickInception()
+    {
+        var current = _actions.InceptionUtc is { } d ? d.ToString("yyyy-MM-dd") : "";
+        var input = Modals.Prompt(
+            "Sync inception",
+            "Track from date (YYYY-MM-DD). Leave blank to ingest all history.",
+            current);
+        if (input is null)
+            return; // cancelled
+
+        input = input.Trim();
+        DateTimeOffset? date;
+        if (input.Length == 0)
+            date = null;
+        else if (DateOnly.TryParse(input, out var parsed))
+            date = new DateTimeOffset(parsed.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero); // 00:00 UTC
+        else
+        {
+            Modals.Info("Invalid date", "Enter a date as YYYY-MM-DD, or leave it blank for all history.");
+            return;
+        }
+
+        _actions.SetInception(date);
+        _page = 1;
+        Reload();
+        Modals.Info("Rebuilt", date is { } dd
+            ? $"Now tracking from {dd:yyyy-MM-dd} (UTC)."
+            : "Now ingesting all history.");
+    }
+
     private void Reload()
     {
         var term = string.IsNullOrWhiteSpace(_searchTerm) ? null : _searchTerm.Trim();
@@ -265,7 +299,8 @@ public sealed class InventoryWindow : Window
 
         var mode = _actions.IsViewer ? "viewer" : "standalone";
         var syncing = _actions.IsInitialSyncing ? "  (initial sync…)" : "";
-        _watchingLabel.Text = $"[{mode}] Watching: {_actions.GameLogPath ?? "(not set)"}{syncing}";
+        var from = _actions.InceptionUtc is { } inc ? $"  |  from {inc:yyyy-MM-dd}" : "";
+        _watchingLabel.Text = $"[{mode}] Watching: {_actions.GameLogPath ?? "(not set)"}{syncing}{from}";
     }
 
     private static EnumerableTableSource<HoldingDetail> BuildSource(IReadOnlyList<HoldingDetail> rows) =>

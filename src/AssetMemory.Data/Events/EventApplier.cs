@@ -23,6 +23,13 @@ public sealed class EventApplier
     }
 
     /// <summary>
+    /// Optional lower bound: events dated before this instant are skipped entirely (not applied, not
+    /// audited, not counted). Null ingests everything. Mutable so the sync-inception picker can retune
+    /// it on the shared singleton at runtime; the next rebuild replays the log through the new bound.
+    /// </summary>
+    public DateTimeOffset? InceptionUtc { get; set; }
+
+    /// <summary>
     /// Applies a whole sequence of events under one transaction. Use this for any multi-event
     /// batch (a tick's worth of new lines, a whole backlog file) -- applying events one at a
     /// time outside a transaction means every write autocommits (and fsyncs) on its own, which
@@ -39,6 +46,9 @@ public sealed class EventApplier
             var count = 0;
             foreach (var ev in events)
             {
+                // Sync-inception lower bound: ignore anything older than the configured start date.
+                if (InceptionUtc is { } inception && ev.Timestamp < inception)
+                    continue;
                 Apply(ev);
                 count++;
             }

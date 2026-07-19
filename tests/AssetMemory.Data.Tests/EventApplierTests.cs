@@ -388,6 +388,71 @@ public class EventApplierTests
         }
     }
 
+    // ---------- sync-inception lower bound ----------
+
+    private static ItemMovedEvent MoveAt(DateTimeOffset when, int qty)
+        => new(when, "Arcadiius", "medpen", qty,
+            new InventoryRef(11, InventoryKind.Container, 0, "11:Container:0"),
+            new InventoryRef(22, InventoryKind.Container, 0, "22:Container:0"),
+            1);
+
+    [Fact]
+    public void ApplyBatch_with_inception_drops_events_before_the_date_and_keeps_the_rest()
+    {
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            var applier = ApplierFor(store);
+            applier.InceptionUtc = T0;  // keep T0 and later, drop anything earlier
+
+            var count = applier.ApplyBatch(new InventoryEvent[]
+            {
+                MoveAt(T0.AddSeconds(-1), 5),  // before → dropped
+                MoveAt(T0, 3),                 // on the boundary → kept (inclusive)
+                MoveAt(T0.AddSeconds(1), 2),   // after → kept
+            });
+
+            Assert.Equal(2, count);  // only the two in-window events counted
+            var item = store.GetItem("medpen")!;
+            Assert.Equal(5, store.GetHolding(22, item.Id)!.Quantity);  // 3 + 2, the dropped 5 excluded
+        }
+    }
+
+    [Fact]
+    public void ApplyBatch_with_inception_does_not_audit_dropped_events()
+    {
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            var applier = ApplierFor(store);
+            applier.InceptionUtc = T0;
+
+            applier.ApplyBatch(new InventoryEvent[] { MoveAt(T0.AddSeconds(-1), 5) });
+
+            Assert.Empty(store.ReadAudit());  // a filtered event leaves no trace at all
+        }
+    }
+
+    [Fact]
+    public void ApplyBatch_without_inception_ingests_everything()
+    {
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            var applier = ApplierFor(store);  // InceptionUtc left null
+
+            var count = applier.ApplyBatch(new InventoryEvent[]
+            {
+                MoveAt(T0.AddSeconds(-100), 4),
+                MoveAt(T0, 1),
+            });
+
+            Assert.Equal(2, count);
+            var item = store.GetItem("medpen")!;
+            Assert.Equal(5, store.GetHolding(22, item.Id)!.Quantity);
+        }
+    }
+
     // ---------- end-to-end through the real parser ----------
 
     [Fact]

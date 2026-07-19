@@ -22,7 +22,13 @@ public interface IActions
     /// <summary>The Game.log currently being watched, or null if not yet configured.</summary>
     string? GameLogPath { get; }
 
+    /// <summary>The active sync-inception lower bound, or null when everything is ingested.</summary>
+    DateTimeOffset? InceptionUtc { get; }
+
     SyncResult Sync();
     void Clear();
     SetPathResult SetPath(string folder, bool startFresh);
+
+    /// <summary>Sets (or clears, when null) the sync-inception date, then rebuilds from the log.</summary>
+    void SetInception(DateTimeOffset? date);
 }

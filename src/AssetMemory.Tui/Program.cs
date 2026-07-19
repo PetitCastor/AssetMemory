@@ -49,7 +49,7 @@ internal static class Program
                     return 1;
                 }
                 dbPath = info.DbPath;
-                actions = new PipeActions(client, info.GameLogPath);
+                actions = new PipeActions(client, info.GameLogPath, info.Inception);
             }
             else
             {

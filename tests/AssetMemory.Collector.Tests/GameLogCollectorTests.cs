@@ -44,6 +44,33 @@ public class GameLogCollectorTests
     }
 
     [Fact]
+    public void Tick_honours_the_applier_inception_bound_and_skips_older_lines()
+    {
+        using var log = new TempLog();
+        var (store, conn) = NewStore();
+        using (conn)
+        {
+            var collector = new GameLogCollector(
+                new LogTailer(log.Path),
+                new EventApplier(store, new ItemNameResolver())
+                {
+                    // Keep 19:23:31 and later; the first move at 19:23:30 is before the bound.
+                    InceptionUtc = new DateTimeOffset(2026, 6, 24, 19, 23, 31, TimeSpan.Zero),
+                });
+
+            log.Append(
+                "<2026-06-24T19:23:30.687Z> [Notice] <InventoryManagementRequest> Queued Request[26] Type[Move] for 'Arcadiius' [204821708183] Source Inventory[601563981557:Container:0] Target Inventory[595318982158:Container:0]. Source[Drink_bottle_synergy_01_plus_a] amount[2] rank[a]. Target[NULL] amount[0] rank[b]. Item[NONE] action[None]. [Team_CoreGameplayFeatures][Inventory]",
+                "<2026-06-24T19:23:32.857Z> [Notice] <InventoryManagementRequest> Queued Request[27] Type[Move] for 'Arcadiius' [204821708183] Source Inventory[11:Container:0] Target Inventory[22:Container:0]. Source[medpen_tier1] amount[3] rank[c]. Target[NULL] amount[0] rank[d]. Item[NONE] action[None]. [Team_CoreGameplayFeatures][Inventory]");
+
+            var ticked = collector.Tick();
+
+            Assert.Equal(1, ticked);                                     // only the in-window move applied
+            Assert.Null(store.GetItem("Drink_bottle_synergy_01_plus_a")); // pre-inception move dropped
+            Assert.Equal(3, store.GetHolding(22, store.GetItem("medpen_tier1")!.Id)!.Quantity);
+        }
+    }
+
+    [Fact]
     public void Tick_is_a_no_op_when_no_new_lines_have_been_appended()
     {
         using var log = new TempLog();
