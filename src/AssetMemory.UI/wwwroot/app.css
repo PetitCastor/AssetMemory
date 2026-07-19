@@ -376,6 +376,50 @@ tbody tr:hover {
     color: var(--accent);
 }
 
+.inception-bar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--border);
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.inception-bar .icon {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+}
+
+.inception-label {
+    white-space: nowrap;
+}
+
+.inception-input {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.2rem 0.4rem;
+    color: var(--text);
+    font-size: 0.75rem;
+    color-scheme: dark light;
+}
+
+.inception-current {
+    opacity: 0.6;
+    white-space: nowrap;
+}
+
+.inception-busy {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    color: var(--accent);
+}
+
 .setup-card {
     background: var(--bg);
     border: 1px solid var(--border);

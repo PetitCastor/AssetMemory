@@ -32,8 +32,10 @@ internal static class Program
         builder.Services.AddRazorComponents()
             .AddInteractiveServerComponents();
 
-        var baseDir = AppContext.BaseDirectory;
-        var settingsPath = Path.Combine(baseDir, "settings.json");
+        // User data (DB + settings) lives under %LOCALAPPDATA%\AssetMemory so it survives redeploys;
+        // EnsureReady migrates a legacy next-to-exe install on first run.
+        AppPaths.EnsureReady();
+        var settingsPath = AppPaths.SettingsPath;
         var settings = AppSettings.Load(settingsPath);
 
         // Auto-detect Game.log if not configured
@@ -48,7 +50,7 @@ internal static class Program
         }
 
         // SQLite store (singleton — WAL handles concurrent reads)
-        var dbPath = Path.Combine(baseDir, "assetmemory.db");
+        var dbPath = AppPaths.DbPath;
         var connString = $"Data Source={dbPath}";
 
         builder.Services.AddSingleton(_ =>
@@ -72,7 +74,10 @@ internal static class Program
         builder.Services.AddSingleton(sp => new EventApplier(
             sp.GetRequiredService<AssetMemoryStore>(),
             sp.GetRequiredService<IItemNameResolver>(),
-            sp.GetRequiredService<IStationNameResolver>()));
+            sp.GetRequiredService<IStationNameResolver>())
+        {
+            InceptionUtc = settings.SyncInceptionUtc,
+        });
         builder.Services.AddSingleton(sp => new GameLogCollector(
             sp.GetRequiredService<LogTailer>(),
             sp.GetRequiredService<EventApplier>()));
@@ -92,6 +97,7 @@ internal static class Program
             sp.GetRequiredService<SyncService>(),
             sp.GetRequiredService<AssetMemoryStore>(),
             sp.GetRequiredService<LogTailer>(),
+            sp.GetRequiredService<EventApplier>(),
             settings,
             settingsPath,
             dbPath));

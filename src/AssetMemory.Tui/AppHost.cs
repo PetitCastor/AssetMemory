@@ -26,8 +26,10 @@ public sealed class AppHost : IDisposable
 
     public AppHost()
     {
-        var baseDir = AppContext.BaseDirectory;
-        var settingsPath = Path.Combine(baseDir, "settings.json");
+        // User data (DB + settings) lives under %LOCALAPPDATA%\AssetMemory (same as the web host);
+        // EnsureReady migrates a legacy next-to-exe install on first run.
+        AppPaths.EnsureReady();
+        var settingsPath = AppPaths.SettingsPath;
         var settings = AppSettings.Load(settingsPath);
 
         // Auto-detect Game.log if not configured (same as the web host).
@@ -41,7 +43,7 @@ public sealed class AppHost : IDisposable
             }
         }
 
-        var dbPath = Path.Combine(baseDir, "assetmemory.db");
+        var dbPath = AppPaths.DbPath;
         var connString = $"Data Source={dbPath}";
 
         var builder = Host.CreateApplicationBuilder();
@@ -63,7 +65,10 @@ public sealed class AppHost : IDisposable
         builder.Services.AddSingleton(sp => new EventApplier(
             sp.GetRequiredService<AssetMemoryStore>(),
             sp.GetRequiredService<IItemNameResolver>(),
-            sp.GetRequiredService<IStationNameResolver>()));
+            sp.GetRequiredService<IStationNameResolver>())
+        {
+            InceptionUtc = settings.SyncInceptionUtc,
+        });
         builder.Services.AddSingleton(sp => new GameLogCollector(
             sp.GetRequiredService<LogTailer>(),
             sp.GetRequiredService<EventApplier>()));
@@ -82,6 +87,7 @@ public sealed class AppHost : IDisposable
             sp.GetRequiredService<SyncService>(),
             sp.GetRequiredService<AssetMemoryStore>(),
             sp.GetRequiredService<LogTailer>(),
+            sp.GetRequiredService<EventApplier>(),
             settings,
             settingsPath,
             dbPath));

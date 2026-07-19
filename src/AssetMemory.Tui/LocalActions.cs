@@ -21,6 +21,7 @@ public sealed class LocalActions : IActions
     public bool IsViewer => false;
     public bool IsInitialSyncing => !_collector.HasCompletedFirstTick;
     public string? GameLogPath => _control.GameLogPath;
+    public DateTimeOffset? InceptionUtc => _control.Inception;
 
     public SyncResult Sync() => _control.Sync();
 
@@ -31,4 +32,6 @@ public sealed class LocalActions : IActions
         var r = _control.SetPath(folder, startFresh);
         return new SetPathResult(r.Ok, r.ResolvedPath, r.Error);
     }
+
+    public void SetInception(DateTimeOffset? date) => _control.SetInception(date);
 }

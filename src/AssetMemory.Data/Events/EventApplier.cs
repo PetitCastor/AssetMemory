@@ -23,6 +23,13 @@ public sealed class EventApplier
     }
 
     /// <summary>
+    /// Optional lower bound: events dated before this instant are skipped entirely (not applied, not
+    /// audited, not counted). Null ingests everything. Mutable so the sync-inception picker can retune
+    /// it on the shared singleton at runtime; the next rebuild replays the log through the new bound.
+    /// </summary>
+    public DateTimeOffset? InceptionUtc { get; set; }
+
+    /// <summary>
     /// Applies a whole sequence of events under one transaction. Use this for any multi-event
     /// batch (a tick's worth of new lines, a whole backlog file) -- applying events one at a
     /// time outside a transaction means every write autocommits (and fsyncs) on its own, which
@@ -39,6 +46,9 @@ public sealed class EventApplier
             var count = 0;
             foreach (var ev in events)
             {
+                // Sync-inception lower bound: ignore anything older than the configured start date.
+                if (InceptionUtc is { } inception && ev.Timestamp < inception)
+                    continue;
                 Apply(ev);
                 count++;
             }
@@ -113,9 +123,15 @@ public sealed class EventApplier
             string.IsNullOrEmpty(label) ? null : label);
     }
 
-    // Labels the box's holdings key (its GEID) so its contents surface in the station-only view,
-    // which shows a location only once it has a non-null label.
+    // Labels the box's holdings key (its GEID) so its contents surface, and records the place it
+    // sits in so it nests under that place. When the open line carried no parent location
+    // (ParentLocationId == 0) we fall back to a bare label so the box still surfaces on its own.
     private void ApplyContainerIdentified(ContainerIdentifiedEvent container)
-        => _store.UpsertLocation(container.ContainerId, container.Timestamp,
-            $"Stor-All {container.ScuSize} SCU");
+    {
+        var label = $"Stor-All {container.ScuSize} SCU";
+        if (container.ParentLocationId > 0)
+            _store.UpsertContainer(container.ContainerId, container.ParentLocationId, container.Timestamp, label);
+        else
+            _store.UpsertLocation(container.ContainerId, container.Timestamp, label);
+    }
 }

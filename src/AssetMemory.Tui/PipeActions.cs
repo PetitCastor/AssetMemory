@@ -12,16 +12,19 @@ public sealed class PipeActions : IActions
 {
     private readonly ControlPipeClient _client;
     private string? _gameLogPath;
+    private DateTimeOffset? _inceptionUtc;
 
-    public PipeActions(ControlPipeClient client, string? gameLogPath)
+    public PipeActions(ControlPipeClient client, string? gameLogPath, DateTimeOffset? inceptionUtc = null)
     {
         _client = client;
         _gameLogPath = gameLogPath;
+        _inceptionUtc = inceptionUtc;
     }
 
     public bool IsViewer => true;
     public bool IsInitialSyncing => false;
     public string? GameLogPath => _gameLogPath;
+    public DateTimeOffset? InceptionUtc => _inceptionUtc;
 
     public SyncResult Sync() => _client.Sync();
 
@@ -33,5 +36,11 @@ public sealed class PipeActions : IActions
         if (r.Ok)
             _gameLogPath = r.ResolvedPath;
         return new SetPathResult(r.Ok, r.ResolvedPath, r.Error);
+    }
+
+    public void SetInception(DateTimeOffset? date)
+    {
+        _client.SetInception(date);
+        _inceptionUtc = date;
     }
 }

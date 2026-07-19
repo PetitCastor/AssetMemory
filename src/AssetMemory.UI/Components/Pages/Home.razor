@@ -2,6 +2,7 @@
 @rendermode InteractiveServer
 @implements IDisposable
 @using AssetMemory.Collector
+@using AssetMemory.Collector.Control
 @using AssetMemory.Data
 @using AssetMemory.Core.Detection
 @inject AssetMemoryStore Store
@@ -9,6 +10,7 @@
 @inject LogTailer Tailer
 @inject SyncService SyncSvc
 @inject GameLogCollector Collector
+@inject ControlService Control
 @inject IJSRuntime JS
 
 <PageTitle>AssetMemory</PageTitle>
@@ -64,14 +66,27 @@
         <div class="toolbar">
             <div class="filter-group">
                 <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
-                <select @bind="SelectedLocation">
+                <select @bind="SelectedPlace">
                     <option value="">All locations</option>
-                    @foreach (var loc in Locations)
+                    @foreach (var p in Places)
                     {
-                        <option value="@loc.Id">@(loc.Label ?? $"Location {loc.Id}")</option>
+                        <option value="@p.Id">@(p.Label ?? $"Location {p.Id}")</option>
                     }
                 </select>
             </div>
+            @if (Containers.Count > 0)
+            {
+                <div class="filter-group">
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+                    <select @bind="SelectedContainer">
+                        <option value="">(local storage)</option>
+                        @foreach (var c in Containers)
+                        {
+                            <option value="@c.Id">@(c.Label ?? $"Container {c.Id}")</option>
+                        }
+                    </select>
+                </div>
+            }
             <div class="filter-group search">
                 <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
                 <input type="text" placeholder="Search items..." @bind="SearchTerm" @bind:event="oninput" />
@@ -228,6 +243,34 @@
         {
             <div class="sync-result">@_syncMessage</div>
         }
+
+        <div class="inception-bar">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            <span class="inception-label">Track from</span>
+            <input type="date" @bind="InceptionDate" class="inception-input" disabled="@_settingInception" />
+            <button class="btn-secondary btn-sm" @onclick="ApplyInception" disabled="@_settingInception">Apply</button>
+            @if (Settings.SyncInceptionUtc is not null)
+            {
+                <button class="btn-secondary btn-sm" @onclick="ClearInception" disabled="@_settingInception">Ingest all</button>
+            }
+            <span class="inception-current">
+                @if (Settings.SyncInceptionUtc is { } incep)
+                {
+                    <text>currently tracking from @incep.ToString("yyyy-MM-dd") (UTC)</text>
+                }
+                else
+                {
+                    <text>currently ingesting all history</text>
+                }
+            </span>
+            @if (_settingInception)
+            {
+                <span class="inception-busy">
+                    <svg class="icon spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                    Rebuilding&hellip;
+                </span>
+            }
+        </div>
     }
 </div>
 
@@ -235,7 +278,8 @@
     private static readonly int[] PageSizeOptions = [10, 25, 50, 100];
 
     private HoldingDetailsPage _pageResult = new([], 0, 0, 0);
-    private List<LocationRow> Locations = [];
+    private List<LocationRow> Places = [];
+    private List<LocationRow> Containers = [];
 
     private string _searchTerm = "";
     private string SearchTerm
@@ -244,11 +288,21 @@
         set { _searchTerm = value; _page = 1; LoadData(); }
     }
 
-    private string _selectedLocation = "";
-    private string SelectedLocation
+    // The top dropdown picks a place (station / local storage); when that place has stocked
+    // containers a second dropdown appears to drill into one. Changing the place clears any
+    // container selection since it no longer applies.
+    private string _selectedPlace = "";
+    private string SelectedPlace
     {
-        get => _selectedLocation;
-        set { _selectedLocation = value; _page = 1; LoadData(); }
+        get => _selectedPlace;
+        set { _selectedPlace = value; _selectedContainer = ""; _page = 1; LoadData(); }
+    }
+
+    private string _selectedContainer = "";
+    private string SelectedContainer
+    {
+        get => _selectedContainer;
+        set { _selectedContainer = value; _page = 1; LoadData(); }
     }
 
     private string SortColumn { get; set; } = "item";
@@ -269,6 +323,8 @@
     private bool _startFresh;
     private bool _confirmingClear;
     private bool _syncing;
+    private bool _settingInception;
+    private DateOnly? InceptionDate { get; set; }
     private System.Threading.Timer? _refreshTimer;
 
     private string ChannelName =>
@@ -276,6 +332,7 @@
 
     protected override void OnInitialized()
     {
+        SyncInceptionInput();
         if (!string.IsNullOrEmpty(Settings.GameLogPath))
             LoadData();
 
@@ -350,7 +407,7 @@
     private void SetGameLogPath(string path)
     {
         Settings.GameLogPath = path;
-        Settings.Save(Path.Combine(AppContext.BaseDirectory, "settings.json"));
+        Settings.Save(AppPaths.SettingsPath);
         Tailer.SetPath(path);
         if (_startFresh)
             Tailer.SeekToEnd();
@@ -382,11 +439,54 @@
         }
     }
 
+    // Seeds the date input from the persisted inception so the picker reflects the active bound.
+    private void SyncInceptionInput()
+        => InceptionDate = Settings.SyncInceptionUtc is { } d ? DateOnly.FromDateTime(d.UtcDateTime) : null;
+
+    private async Task ApplyInception()
+    {
+        if (InceptionDate is not { } date)
+        {
+            _syncMessage = "Pick a date to set a tracking start, or use \"Ingest all\".";
+            return;
+        }
+        // The chosen calendar date at 00:00 UTC, an inclusive lower bound (events on/after it are kept).
+        await RunSetInception(new DateTimeOffset(date.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero));
+    }
+
+    private async Task ClearInception()
+    {
+        InceptionDate = null;
+        await RunSetInception(null);
+    }
+
+    // Setting the inception rebuilds the DB from the log under the new bound (may take a moment on a
+    // large log), so run it off the UI thread and show a busy state — mirrors RunSync.
+    private async Task RunSetInception(DateTimeOffset? date)
+    {
+        _settingInception = true;
+        _syncMessage = null;
+        try
+        {
+            await Task.Run(() => Control.SetInception(date));
+            SyncInceptionInput();
+            _page = 1;
+            LoadData();
+            _syncMessage = date is { } d
+                ? $"Now tracking from {d:yyyy-MM-dd} (UTC)."
+                : "Now ingesting all history.";
+        }
+        finally
+        {
+            _settingInception = false;
+        }
+    }
+
     private void ConfirmClear()
     {
         Collector.StartFresh(() => Store.ClearAll());
         Settings.ProcessedBackups.Clear();
-        Settings.Save(Path.Combine(AppContext.BaseDirectory, "settings.json"));
+        Settings.Save(AppPaths.SettingsPath);
         _confirmingClear = false;
         _syncMessage = null;
         _page = 1;
@@ -395,13 +495,16 @@
 
     private void LoadData()
     {
-        long? locId = long.TryParse(SelectedLocation, out var parsed) ? parsed : null;
+        long? placeId = long.TryParse(SelectedPlace, out var pid) ? pid : null;
+        long? containerId = long.TryParse(SelectedContainer, out var cid) ? cid : null;
         var term = string.IsNullOrWhiteSpace(SearchTerm) ? null : SearchTerm.Trim();
 
-        // Station inventories only — a resolved label marks a place we can name (New Babbage,
-        // Lorville, …). Container-held items (backpacks, SCU boxes, worn armor) stay hidden for now.
-        _pageResult = Store.GetHoldingDetailsPage(locId, term, SortColumn, SortAsc, _page, _pageSize);
-        Locations = Store.GetLocationsWithHoldings().ToList();
+        // A place rolls up its containers' contents; a chosen container narrows to just that box.
+        _pageResult = Store.GetHoldingDetailsPage(placeId, containerId, term, SortColumn, SortAsc, _page, _pageSize);
+        Places = Store.GetPlacesWithHoldings().ToList();
+        Containers = placeId is not null
+            ? Store.GetContainersForPlace(placeId.Value).ToList()
+            : [];
     }
 
     private void GoToPage(int page)

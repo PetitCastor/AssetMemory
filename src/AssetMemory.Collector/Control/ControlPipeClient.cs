@@ -20,6 +20,8 @@ public sealed class ControlPipeClient
     public void Clear() => Request<ControlOk>(new ControlRequest("clear"));
     public ControlSetPathResult SetPath(string folder, bool startFresh)
         => Request<ControlSetPathResult>(new ControlRequest("setpath", folder, startFresh));
+    public void SetInception(DateTimeOffset? date)
+        => Request<ControlOk>(new ControlRequest("setinception", Inception: date));
 
     private T Request<T>(ControlRequest req)
     {

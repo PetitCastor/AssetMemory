@@ -14,6 +14,12 @@ public sealed class AppSettings
     public string? GameLogPath { get; set; }
     public List<string> ProcessedBackups { get; set; } = [];
 
+    /// <summary>
+    /// Lower bound on which log events get ingested: events dated before this instant are dropped.
+    /// Null (the default) ingests everything. Set via the UI's sync-inception date picker.
+    /// </summary>
+    public DateTimeOffset? SyncInceptionUtc { get; set; }
+
     public static AppSettings Load(string path)
     {
         if (!File.Exists(path))

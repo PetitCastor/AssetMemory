@@ -242,6 +242,20 @@ public class EventParserTests
         Assert.Equal(681562156430, c.ContainerId);  // the owning GEID, not the :0 id
         Assert.Equal(2, c.ScuSize);
         Assert.Equal("Carryable_TBO_InventoryContainer_2SCU", c.ContainerClass);
+        Assert.Equal(141810852, c.ParentLocationId);  // the place (Source Inventory location) the box sits at
+    }
+
+    [Fact]
+    public void Nested_container_reports_no_parent_when_the_open_has_no_location_source()
+    {
+        // A nested open whose Source Inventory is a container ref (not a place) yields no parent —
+        // the box then surfaces on its own rather than nesting under a bogus place.
+        var parser = new NestedContainerParser();
+        const string openFromContainer =
+            "<2026-07-19T00:06:56.132Z> [Notice] <InventoryManagementRequest> Queued Request[49] Type[OpenNestedInventory] for 'Arcadiius' [204821708183] Source Inventory[999:Container:0] Target Inventory[INVALID]. Source[Carryable_TBO_InventoryContainer_2SCU] amount[0] rank[amqpxvhmrjxjn]. Target[NULL] amount[0] rank[]. Item[NONE] action[None]. [Team_CoreGameplayFeatures][Inventory]";
+        Assert.False(parser.TryParse(Entry(openFromContainer), out _));
+        Assert.True(parser.TryParse(Entry(BoxQueryLine), out var ev));
+        Assert.Equal(0, Assert.IsType<ContainerIdentifiedEvent>(ev).ParentLocationId);
     }
 
     [Theory]
@@ -309,5 +323,6 @@ public class EventParserTests
         var c = Assert.IsType<ContainerIdentifiedEvent>(Assert.Single(events, e => e is ContainerIdentifiedEvent));
         Assert.Equal(681562156430, c.ContainerId);
         Assert.Equal(4, c.ScuSize);
+        Assert.Equal(141810852, c.ParentLocationId);
     }
 }

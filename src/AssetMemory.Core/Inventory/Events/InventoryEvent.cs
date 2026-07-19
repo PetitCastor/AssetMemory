@@ -62,9 +62,12 @@ public sealed record StationIdentifiedEvent(
 /// off) to the class it was placed from (e.g. <c>Carryable_TBO_InventoryContainer_2SCU</c>) and the
 /// derived <see cref="ScuSize"/>. Recovered by pairing an <c>OpenNestedInventory</c> request (carries
 /// the class) with the <c>Query Inventory</c> line that reports the box's numeric container ref.
+/// <see cref="ParentLocationId"/> is the place the box sits at (the <c>:Location:</c> id on the open
+/// line's <c>Source Inventory</c>), so the box can nest under that place; <c>0</c> when unknown.
 /// </summary>
 public sealed record ContainerIdentifiedEvent(
     DateTimeOffset Timestamp,
     long ContainerId,
     string ContainerClass,
-    int ScuSize) : InventoryEvent(Timestamp);
+    int ScuSize,
+    long ParentLocationId) : InventoryEvent(Timestamp);

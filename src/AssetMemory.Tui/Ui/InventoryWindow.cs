@@ -19,18 +19,21 @@ public sealed class InventoryWindow : Window
 
     // Query state (mirrors Home.razor)
     private string _searchTerm = "";
-    private long? _selectedLocationId;
+    private long? _selectedPlaceId;
+    private long? _selectedContainerId;
     private string _sortColumn = "item";
     private bool _sortAsc = true;
     private int _page = 1;
     private int _pageSize = 25;
 
     private HoldingDetailsPage _pageResult = new([], 0, 0, 0);
-    private List<LocationRow> _locations = [];
+    private List<LocationRow> _places = [];
+    private List<LocationRow> _containers = [];
 
     // Controls
     private readonly TextField _searchField;
     private readonly Button _locBtn;
+    private readonly Button _containerBtn;
     private readonly Button _pageSizeBtn;
     private readonly Button _itemSortBtn;
     private readonly Button _locSortBtn;
@@ -53,8 +56,10 @@ public sealed class InventoryWindow : Window
         // --- Row 0: search + filters ---
         var searchLabel = new Label { X = 1, Y = 0, Text = "Search:" };
         _searchField = new TextField { X = 9, Y = 0, Width = 28, Text = "" };
-        _locBtn = new Button { X = Pos.Right(_searchField) + 2, Y = 0, Text = "Location: All" };
-        _pageSizeBtn = new Button { X = Pos.Right(_locBtn) + 1, Y = 0, Text = "Per page: 25" };
+        _locBtn = new Button { X = Pos.Right(_searchField) + 2, Y = 0, Text = "Place: All" };
+        // Only shown once the selected place has stocked containers to drill into.
+        _containerBtn = new Button { X = Pos.Right(_locBtn) + 1, Y = 0, Text = "Container: (local)", Visible = false };
+        _pageSizeBtn = new Button { X = Pos.Right(_containerBtn) + 1, Y = 0, Text = "Per page: 25" };
         var refreshBtn = new Button { X = Pos.Right(_pageSizeBtn) + 1, Y = 0, Text = "Refresh" };
 
         // --- Row 1: sort ---
@@ -82,6 +87,7 @@ public sealed class InventoryWindow : Window
         var syncBtn = new Button { X = Pos.Right(_nextBtn) + 3, Y = Pos.Bottom(_table) + 1, Text = "Sync backups" };
         var freshBtn = new Button { X = Pos.Right(syncBtn) + 1, Y = Pos.Bottom(_table) + 1, Text = "Start fresh" };
         var pathBtn = new Button { X = Pos.Right(freshBtn) + 1, Y = Pos.Bottom(_table) + 1, Text = "Change folder" };
+        var inceptionBtn = new Button { X = Pos.Right(pathBtn) + 1, Y = Pos.Bottom(_table) + 1, Text = "Sync from…" };
         _watchingLabel = new Label { X = 1, Y = Pos.Bottom(_table) + 2, Width = Dim.Fill(1), Text = "" };
 
         // --- Events ---
@@ -92,7 +98,8 @@ public sealed class InventoryWindow : Window
             Reload();
         };
 
-        _locBtn.Accepting += (_, _) => PickLocation();
+        _locBtn.Accepting += (_, _) => PickPlace();
+        _containerBtn.Accepting += (_, _) => PickContainer();
         _pageSizeBtn.Accepting += (_, _) =>
         {
             var idx = Array.IndexOf(PageSizes, _pageSize);
@@ -138,10 +145,12 @@ public sealed class InventoryWindow : Window
             }
         };
 
-        Add(searchLabel, _searchField, _locBtn, _pageSizeBtn, refreshBtn,
+        inceptionBtn.Accepting += (_, _) => PickInception();
+
+        Add(searchLabel, _searchField, _locBtn, _containerBtn, _pageSizeBtn, refreshBtn,
             sortLabel, _itemSortBtn, _locSortBtn, _qtySortBtn, _seenSortBtn,
             _table,
-            _statusLabel, _prevBtn, _pageLabel, _nextBtn, syncBtn, freshBtn, pathBtn, _watchingLabel);
+            _statusLabel, _prevBtn, _pageLabel, _nextBtn, syncBtn, freshBtn, pathBtn, inceptionBtn, _watchingLabel);
 
         UpdateSortButtons();
         Reload();
@@ -177,30 +186,92 @@ public sealed class InventoryWindow : Window
         _seenSortBtn.Text = "Last seen" + Arrow("seen");
     }
 
-    private void PickLocation()
+    private void PickPlace()
     {
-        _locations = _store.GetLocationsWithHoldings().ToList();
+        _places = _store.GetPlacesWithHoldings().ToList();
         var items = new List<string> { "All locations" };
-        items.AddRange(_locations.Select(l => l.Label ?? $"Location {l.Id}"));
+        items.AddRange(_places.Select(l => l.Label ?? $"Location {l.Id}"));
 
-        var current = _selectedLocationId is null
+        var current = _selectedPlaceId is null
             ? 0
-            : _locations.FindIndex(l => l.Id == _selectedLocationId) + 1;
+            : _places.FindIndex(l => l.Id == _selectedPlaceId) + 1;
 
-        var choice = Modals.ChooseFromList("Filter by location", items, current);
+        var choice = Modals.ChooseFromList("Filter by place", items, current);
         if (choice < 0)
             return;
 
-        _selectedLocationId = choice == 0 ? null : _locations[choice - 1].Id;
+        _selectedPlaceId = choice == 0 ? null : _places[choice - 1].Id;
+        _selectedContainerId = null;  // a new place invalidates any container selection
         _page = 1;
         Reload();
+    }
+
+    private void PickContainer()
+    {
+        if (_selectedPlaceId is not { } placeId)
+            return;
+
+        _containers = _store.GetContainersForPlace(placeId).ToList();
+        if (_containers.Count == 0)
+            return;
+
+        var items = new List<string> { "(local storage)" };
+        items.AddRange(_containers.Select(c => c.Label ?? $"Container {c.Id}"));
+
+        var current = _selectedContainerId is null
+            ? 0
+            : _containers.FindIndex(c => c.Id == _selectedContainerId) + 1;
+
+        var choice = Modals.ChooseFromList("Filter by container", items, current);
+        if (choice < 0)
+            return;
+
+        _selectedContainerId = choice == 0 ? null : _containers[choice - 1].Id;
+        _page = 1;
+        Reload();
+    }
+
+    // Prompts for a sync-inception date (blank clears it), then rebuilds the DB under the new bound.
+    private void PickInception()
+    {
+        var current = _actions.InceptionUtc is { } d ? d.ToString("yyyy-MM-dd") : "";
+        var input = Modals.Prompt(
+            "Sync inception",
+            "Track from date (YYYY-MM-DD). Leave blank to ingest all history.",
+            current);
+        if (input is null)
+            return; // cancelled
+
+        input = input.Trim();
+        DateTimeOffset? date;
+        if (input.Length == 0)
+            date = null;
+        else if (DateOnly.TryParse(input, out var parsed))
+            date = new DateTimeOffset(parsed.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero); // 00:00 UTC
+        else
+        {
+            Modals.Info("Invalid date", "Enter a date as YYYY-MM-DD, or leave it blank for all history.");
+            return;
+        }
+
+        _actions.SetInception(date);
+        _page = 1;
+        Reload();
+        Modals.Info("Rebuilt", date is { } dd
+            ? $"Now tracking from {dd:yyyy-MM-dd} (UTC)."
+            : "Now ingesting all history.");
     }
 
     private void Reload()
     {
         var term = string.IsNullOrWhiteSpace(_searchTerm) ? null : _searchTerm.Trim();
-        _pageResult = _store.GetHoldingDetailsPage(_selectedLocationId, term, _sortColumn, _sortAsc, _page, _pageSize);
-        _locations = _store.GetLocationsWithHoldings().ToList();
+
+        // A place rolls up its containers' contents; a chosen container narrows to just that box.
+        _pageResult = _store.GetHoldingDetailsPage(_selectedPlaceId, _selectedContainerId, term, _sortColumn, _sortAsc, _page, _pageSize);
+        _places = _store.GetPlacesWithHoldings().ToList();
+        _containers = _selectedPlaceId is { } placeId
+            ? _store.GetContainersForPlace(placeId).ToList()
+            : [];
 
         var totalPages = Math.Max(1, (int)Math.Ceiling((double)_pageResult.TotalCount / _pageSize));
         _page = Math.Clamp(_page, 1, totalPages);
@@ -214,14 +285,22 @@ public sealed class InventoryWindow : Window
         _prevBtn.Enabled = _page > 1;
         _nextBtn.Enabled = _page < totalPages;
 
-        var locName = _selectedLocationId is null
+        var placeName = _selectedPlaceId is null
             ? "All"
-            : _locations.FirstOrDefault(l => l.Id == _selectedLocationId)?.Label ?? $"#{_selectedLocationId}";
-        _locBtn.Text = $"Location: {locName}";
+            : _places.FirstOrDefault(l => l.Id == _selectedPlaceId)?.Label ?? $"#{_selectedPlaceId}";
+        _locBtn.Text = $"Place: {placeName}";
+
+        // The container button only appears once the selected place actually has stocked boxes.
+        _containerBtn.Visible = _containers.Count > 0;
+        var containerName = _selectedContainerId is null
+            ? "(local)"
+            : _containers.FirstOrDefault(c => c.Id == _selectedContainerId)?.Label ?? $"#{_selectedContainerId}";
+        _containerBtn.Text = $"Container: {containerName}";
 
         var mode = _actions.IsViewer ? "viewer" : "standalone";
         var syncing = _actions.IsInitialSyncing ? "  (initial sync…)" : "";
-        _watchingLabel.Text = $"[{mode}] Watching: {_actions.GameLogPath ?? "(not set)"}{syncing}";
+        var from = _actions.InceptionUtc is { } inc ? $"  |  from {inc:yyyy-MM-dd}" : "";
+        _watchingLabel.Text = $"[{mode}] Watching: {_actions.GameLogPath ?? "(not set)"}{syncing}{from}";
     }
 
     private static EnumerableTableSource<HoldingDetail> BuildSource(IReadOnlyList<HoldingDetail> rows) =>

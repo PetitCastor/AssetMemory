@@ -214,7 +214,8 @@ public class EventApplierTests
             var applier = ApplierFor(store);
             applier.Apply(new ContainerIdentifiedEvent(
                 T0, ContainerId: 681562156430,
-                ContainerClass: "Carryable_TBO_InventoryContainer_2SCU", ScuSize: 2));
+                ContainerClass: "Carryable_TBO_InventoryContainer_2SCU", ScuSize: 2,
+                ParentLocationId: 141810852));
             applier.Apply(new ItemMovedEvent(T0.AddSeconds(1),
                 "Arcadiius", "behr_shotgun_ballistic_01", 1,
                 new InventoryRef(204821708183, InventoryKind.Location, 141810852, "204821708183:Location:141810852"),
@@ -226,6 +227,13 @@ public class EventApplierTests
             Assert.Equal("Stor-All 2 SCU", store.GetLocation(681562156430)!.Label);
             var item = store.GetItem("behr_shotgun_ballistic_01")!;
             Assert.Equal(1, store.GetHolding(681562156430, item.Id)!.Quantity);
+
+            // The box nests under its place: reachable via the container dropdown query...
+            var boxes = store.GetContainersForPlace(141810852).ToList();
+            Assert.Equal(681562156430, Assert.Single(boxes).Id);
+            // ...and its units roll up into the place scope and the "all locations" aggregate.
+            Assert.Equal(1, store.GetHoldingDetailsPage(141810852, null, null, "item", true, 1, 50).TotalUnits);
+            Assert.Equal(1, store.GetHoldingDetailsPage(null, null, null, "item", true, 1, 50).TotalUnits);
         }
     }
 
@@ -245,7 +253,7 @@ public class EventApplierTests
             Assert.Null(store.GetLocation(681562156430)!.Label);
 
             applier.Apply(new ContainerIdentifiedEvent(
-                T0.AddSeconds(1), 681562156430, "Carryable_TBO_InventoryContainer_8SCU", 8));
+                T0.AddSeconds(1), 681562156430, "Carryable_TBO_InventoryContainer_8SCU", 8, 141810852));
 
             Assert.Equal("Stor-All 8 SCU", store.GetLocation(681562156430)!.Label);
             var item = store.GetItem("behr_shotgun_ballistic_01")!;
@@ -261,7 +269,7 @@ public class EventApplierTests
         {
             var applier = ApplierFor(store);
             applier.Apply(new ContainerIdentifiedEvent(
-                T0, 681562156430, "Carryable_TBO_InventoryContainer_2SCU", 2));
+                T0, 681562156430, "Carryable_TBO_InventoryContainer_2SCU", 2, 141810852));
             // A subsequent move upserts the same location with a null label — COALESCE must keep it.
             applier.Apply(new ItemMovedEvent(T0.AddSeconds(1),
                 "Arcadiius", "behr_shotgun_ballistic_01", 1,
@@ -270,6 +278,36 @@ public class EventApplierTests
                 1));
 
             Assert.Equal("Stor-All 2 SCU", store.GetLocation(681562156430)!.Label);
+        }
+    }
+
+    [Fact]
+    public void Items_moved_from_an_unlabelled_backpack_into_a_box_track_and_roll_up_under_the_place()
+    {
+        // Evaluation proof: moving OUT of a backpack (an unlabelled Container) INTO an identified
+        // box is tracked by the same ledger as any move -- the units land in the box and, because
+        // the box nests under its place, they stay visible in the place + all-locations rollup.
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            var applier = ApplierFor(store);
+            store.UpsertLocation(141810852, T0, "Nyx Castra Jump Point");        // the place
+            applier.Apply(new ContainerIdentifiedEvent(
+                T0, 681562156430, "Carryable_TBO_InventoryContainer_2SCU", 2, 141810852));  // box @ place
+            applier.Apply(new ItemMovedEvent(T0.AddSeconds(1),
+                "Arcadiius", "medpen", 2,
+                new InventoryRef(595318982158, InventoryKind.Container, 0, "595318982158:Container:0"), // backpack
+                new InventoryRef(681562156430, InventoryKind.Container, 0, "681562156430:Container:0"), // box
+                1));
+
+            var item = store.GetItem("medpen")!;
+            Assert.Equal(2, store.GetHolding(681562156430, item.Id)!.Quantity);   // landed in the box
+            Assert.Null(store.GetHolding(595318982158, item.Id));                 // not left in the backpack
+
+            // Visible in the place rollup, the box drill-down, and the all-locations aggregate.
+            Assert.Equal(2, store.GetHoldingDetailsPage(141810852, null, null, "item", true, 1, 50).TotalUnits);
+            Assert.Equal(2, store.GetHoldingDetailsPage(141810852, 681562156430, null, "item", true, 1, 50).TotalUnits);
+            Assert.Equal(2, store.GetHoldingDetailsPage(null, null, null, "item", true, 1, 50).TotalUnits);
         }
     }
 
@@ -347,6 +385,71 @@ public class EventApplierTests
 
             Assert.Null(store.GetLocation(1));
             Assert.Empty(store.ReadAudit());
+        }
+    }
+
+    // ---------- sync-inception lower bound ----------
+
+    private static ItemMovedEvent MoveAt(DateTimeOffset when, int qty)
+        => new(when, "Arcadiius", "medpen", qty,
+            new InventoryRef(11, InventoryKind.Container, 0, "11:Container:0"),
+            new InventoryRef(22, InventoryKind.Container, 0, "22:Container:0"),
+            1);
+
+    [Fact]
+    public void ApplyBatch_with_inception_drops_events_before_the_date_and_keeps_the_rest()
+    {
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            var applier = ApplierFor(store);
+            applier.InceptionUtc = T0;  // keep T0 and later, drop anything earlier
+
+            var count = applier.ApplyBatch(new InventoryEvent[]
+            {
+                MoveAt(T0.AddSeconds(-1), 5),  // before → dropped
+                MoveAt(T0, 3),                 // on the boundary → kept (inclusive)
+                MoveAt(T0.AddSeconds(1), 2),   // after → kept
+            });
+
+            Assert.Equal(2, count);  // only the two in-window events counted
+            var item = store.GetItem("medpen")!;
+            Assert.Equal(5, store.GetHolding(22, item.Id)!.Quantity);  // 3 + 2, the dropped 5 excluded
+        }
+    }
+
+    [Fact]
+    public void ApplyBatch_with_inception_does_not_audit_dropped_events()
+    {
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            var applier = ApplierFor(store);
+            applier.InceptionUtc = T0;
+
+            applier.ApplyBatch(new InventoryEvent[] { MoveAt(T0.AddSeconds(-1), 5) });
+
+            Assert.Empty(store.ReadAudit());  // a filtered event leaves no trace at all
+        }
+    }
+
+    [Fact]
+    public void ApplyBatch_without_inception_ingests_everything()
+    {
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            var applier = ApplierFor(store);  // InceptionUtc left null
+
+            var count = applier.ApplyBatch(new InventoryEvent[]
+            {
+                MoveAt(T0.AddSeconds(-100), 4),
+                MoveAt(T0, 1),
+            });
+
+            Assert.Equal(2, count);
+            var item = store.GetItem("medpen")!;
+            Assert.Equal(5, store.GetHolding(22, item.Id)!.Quantity);
         }
     }
 

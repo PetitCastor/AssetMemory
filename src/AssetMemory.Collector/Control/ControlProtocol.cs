@@ -16,11 +16,12 @@ public static class ControlProtocol
     public static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 }
 
-/// <summary>A control request. <see cref="Op"/> is one of: info, sync, clear, setpath.</summary>
-public sealed record ControlRequest(string Op, string? Folder = null, bool StartFresh = false);
+/// <summary>A control request. <see cref="Op"/> is one of: info, sync, clear, setpath, setinception.</summary>
+public sealed record ControlRequest(
+    string Op, string? Folder = null, bool StartFresh = false, DateTimeOffset? Inception = null);
 
-/// <summary>Response to <c>info</c> — where the owning process keeps its data.</summary>
-public sealed record ControlInfo(string DbPath, string? GameLogPath);
+/// <summary>Response to <c>info</c> — where the owning process keeps its data and its active bounds.</summary>
+public sealed record ControlInfo(string DbPath, string? GameLogPath, DateTimeOffset? Inception = null);
 
 /// <summary>Response to <c>clear</c>.</summary>
 public sealed record ControlOk(bool Ok);

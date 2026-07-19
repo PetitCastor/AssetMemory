@@ -49,7 +49,7 @@ internal static class Program
                     return 1;
                 }
                 dbPath = info.DbPath;
-                actions = new PipeActions(client, info.GameLogPath);
+                actions = new PipeActions(client, info.GameLogPath, info.Inception);
             }
             else
             {
@@ -93,7 +93,7 @@ internal static class Program
         using var host = new AppHost();
         using var read = new ReadStore(host.DbPath);
 
-        var page = read.Store.GetHoldingDetailsPage(null, null, "item", true, 1, 25);
+        var page = read.Store.GetHoldingDetailsPage(null, null, null, "item", true, 1, 25);
         var locations = read.Store.GetLocationsWithHoldings().ToList();
         Console.WriteLine($"SELFTEST ok: dbPath={host.DbPath}");
         Console.WriteLine($"SELFTEST rows={page.TotalCount} locations={locations.Count} " +
