@@ -63,6 +63,7 @@ public sealed class EventApplier
             case ContainerOpenedEvent open: ApplyOpened(open); break;
             case ContainerClosedEvent close: ApplyClosed(close); break;
             case StationIdentifiedEvent station: ApplyStation(station); break;
+            case ContainerIdentifiedEvent container: ApplyContainerIdentified(container); break;
             case GridItemCountEvent: /* no-op — purely a UI hint, no identity */ break;
         }
 
@@ -111,4 +112,10 @@ public sealed class EventApplier
         _store.UpsertLocation(station.PlaceId, station.Timestamp,
             string.IsNullOrEmpty(label) ? null : label);
     }
+
+    // Labels the box's holdings key (its GEID) so its contents surface in the station-only view,
+    // which shows a location only once it has a non-null label.
+    private void ApplyContainerIdentified(ContainerIdentifiedEvent container)
+        => _store.UpsertLocation(container.ContainerId, container.Timestamp,
+            $"Stor-All {container.ScuSize} SCU");
 }

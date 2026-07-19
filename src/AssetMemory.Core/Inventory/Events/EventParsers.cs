@@ -224,3 +224,78 @@ public sealed class StationInventoryParser : IInventoryEventParser
     }
 }
 
+/// <summary>
+/// Stateful: names a placed storage container (a "Stor-All" SCU box) by pairing the
+/// <c>OpenNestedInventory</c> request that carries its <c>Carryable_TBO_InventoryContainer_NSCU</c>
+/// class with the numeric-ref line (<c>&lt;Query Inventory&gt;</c>, older builds
+/// <c>&lt;RequestInventory&gt;</c>) that immediately follows and reports the box's own
+/// <c>GEID:Container:0</c> ref. The open line only carries the class and the *location* the box sits
+/// at, never the box's GEID; the follow-up query carries the GEID but not the class — so both are
+/// needed to attach a size/name to the identity holdings key off.
+///
+/// The open line stashes state and reports no event (the existing <see cref="ContainerOpenedParser"/>
+/// still emits its open event); the paired query emits a <see cref="ContainerIdentifiedEvent"/>. Only
+/// classes matching <c>_NSCU</c> qualify, so ordinary nested opens are ignored. Lines are processed in
+/// log order on a single thread; this parser must run before <see cref="ContainerOpenedParser"/> so it
+/// sees the open line first.
+/// </summary>
+public sealed partial class NestedContainerParser : IInventoryEventParser
+{
+    // Numeric-ref line can trail the open by a few intervening lines (grid queries), but shares a
+    // timestamp to within a fraction of a second; anything beyond this means the open was dangling.
+    private static readonly TimeSpan PairWindow = TimeSpan.FromSeconds(2);
+
+    // The game renamed this category from "RequestInventory" to "Query Inventory"; accept both.
+    private static readonly string[] NumericRefCategories = ["RequestInventory", "Query Inventory"];
+
+    [GeneratedRegex(@"(?<![0-9])(\d+)SCU", RegexOptions.Compiled)]
+    private static partial Regex ScuSizeRegex();
+
+    private long _pendingSize;
+    private string? _pendingClass;
+    private DateTimeOffset _pendingAt;
+
+    public bool TryParse(LogEntry entry, [NotNullWhen(true)] out InventoryEvent? ev)
+    {
+        ev = null;
+
+        if (entry.Category == "InventoryManagementRequest"
+            && entry.Message.StartsWith("Queued Request", StringComparison.Ordinal)
+            && LogFields.Get(entry.Message, "Type") == "OpenNestedInventory")
+        {
+            var cls = LogFields.Get(entry.Message, "Source");
+            if (!string.IsNullOrEmpty(cls) && TryParseScu(cls, out var size))
+            {
+                _pendingClass = cls;
+                _pendingSize = size;
+                _pendingAt = entry.Timestamp;
+            }
+            return false; // class stashed; the GEID (and the event) comes on the paired line.
+        }
+
+        if (Array.IndexOf(NumericRefCategories, entry.Category) < 0)
+            return false;
+
+        if (_pendingClass is null || entry.Timestamp - _pendingAt > PairWindow)
+            return false;
+
+        if (!InventoryRef.TryParse(LogFields.Get(entry.Message, "Inventory"), out var inv)
+            || inv.Kind != InventoryKind.Container)
+            return false;
+
+        var pendingClass = _pendingClass;
+        var pendingSize = _pendingSize;
+        _pendingClass = null;
+
+        // A container ref keys off its owning GEID (the 1st field); the Id (3rd field) is 0 here.
+        ev = new ContainerIdentifiedEvent(entry.Timestamp, inv.Owner, pendingClass, (int)pendingSize);
+        return true;
+    }
+
+    private static bool TryParseScu(string className, out long size)
+    {
+        var m = ScuSizeRegex().Match(className);
+        return FieldHelpers.TryLong(m.Success ? m.Groups[1].Value : null, out size) && size > 0;
+    }
+}
+

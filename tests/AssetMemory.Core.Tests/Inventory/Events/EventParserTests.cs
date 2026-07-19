@@ -213,4 +213,101 @@ public class EventParserTests
             "<2026-03-05T22:10:00.000Z> [Notice] <RequestInventory> Request[7] Inventory[200146296252:Location:308639451] [Team_CoreGameplayFeatures][Inventory]";
         Assert.False(parser.TryParse(Entry(laterStationInv), out _));
     }
+
+    // ---------- NestedContainerParser (Stor-All SCU boxes) ----------
+    // Opening a placed box logs its class on the OpenNestedInventory line but its persistent GEID
+    // only on the "<Query Inventory>" line that follows (a few grid-query lines later). The parser
+    // pairs the two to name the container its holdings key off.
+
+    private static string OpenBox(string cls, string ts = "2026-07-19T00:06:56.132Z") =>
+        $"<{ts}> [Notice] <InventoryManagementRequest> Queued Request[49] Type[OpenNestedInventory] for 'Arcadiius' [204821708183] Source Inventory[204821708183:Location:141810852] Target Inventory[INVALID]. Source[{cls}] amount[0] rank[amqpxvhmrjxjn]. Target[NULL] amount[0] rank[]. Item[NONE] action[None]. [Team_CoreGameplayFeatures][Inventory]";
+
+    // The noisy "Query Inventory" line that carries no Inventory[...] ref — must be skipped without
+    // discarding the pending open.
+    private const string QueryNoise =
+        "<2026-07-19T00:06:56.200Z> [Notice] <Query Inventory> Elapsed[0.061596] for IInventoryAPI::AsyncQueryInventory. [Team_CoreGameplayFeatures][Inventory]";
+    private const string BoxQueryLine =
+        "<2026-07-19T00:06:56.250Z> [Notice] <Query Inventory> Request[34] Inventory[681562156430:Container:0] [Team_CoreGameplayFeatures][Inventory]";
+
+    [Fact]
+    public void Nested_container_pairs_open_class_with_the_following_container_ref()
+    {
+        var parser = new NestedContainerParser();
+
+        Assert.False(parser.TryParse(Entry(OpenBox("Carryable_TBO_InventoryContainer_2SCU")), out _));
+        Assert.False(parser.TryParse(Entry(QueryNoise), out _));   // no ref -> skipped, pending kept
+        Assert.True(parser.TryParse(Entry(BoxQueryLine), out var ev));
+
+        var c = Assert.IsType<ContainerIdentifiedEvent>(ev);
+        Assert.Equal(681562156430, c.ContainerId);  // the owning GEID, not the :0 id
+        Assert.Equal(2, c.ScuSize);
+        Assert.Equal("Carryable_TBO_InventoryContainer_2SCU", c.ContainerClass);
+    }
+
+    [Theory]
+    [InlineData("Carryable_TBO_InventoryContainer_2SCU", 2)]
+    [InlineData("Carryable_TBO_InventoryContainer_4SCU", 4)]
+    [InlineData("Carryable_TBO_InventoryContainer_8SCU", 8)]
+    public void Nested_container_derives_scu_size_from_the_class_name(string cls, int size)
+    {
+        var parser = new NestedContainerParser();
+        Assert.False(parser.TryParse(Entry(OpenBox(cls)), out _));
+        Assert.True(parser.TryParse(Entry(BoxQueryLine), out var ev));
+        Assert.Equal(size, Assert.IsType<ContainerIdentifiedEvent>(ev).ScuSize);
+    }
+
+    [Fact]
+    public void Nested_container_ignores_a_container_query_with_no_pending_open()
+    {
+        Assert.False(new NestedContainerParser().TryParse(Entry(BoxQueryLine), out _));
+    }
+
+    [Fact]
+    public void Nested_container_ignores_an_open_whose_class_has_no_scu_size()
+    {
+        // A nested open for something that is not a Stor-All box must not stash — so the next
+        // container query is not mislabelled as a box.
+        var parser = new NestedContainerParser();
+        Assert.False(parser.TryParse(Entry(OpenBox("Carryable_generic_lootcrate_01")), out _));
+        Assert.False(parser.TryParse(Entry(BoxQueryLine), out _));
+    }
+
+    [Fact]
+    public void Nested_container_ignores_a_container_query_far_in_time_from_the_open()
+    {
+        var parser = new NestedContainerParser();
+        Assert.False(parser.TryParse(Entry(OpenBox("Carryable_TBO_InventoryContainer_2SCU")), out _));
+        const string lateQuery =
+            "<2026-07-19T00:07:30.000Z> [Notice] <Query Inventory> Request[34] Inventory[681562156430:Container:0] [Team_CoreGameplayFeatures][Inventory]";
+        Assert.False(parser.TryParse(Entry(lateQuery), out _));
+    }
+
+    [Fact]
+    public void Nested_container_ignores_a_station_location_query()
+    {
+        // A Location-kind query belongs to the station parser, not the box parser.
+        var parser = new NestedContainerParser();
+        Assert.False(parser.TryParse(Entry(OpenBox("Carryable_TBO_InventoryContainer_2SCU")), out _));
+        const string stationQuery =
+            "<2026-07-19T00:06:56.260Z> [Notice] <Query Inventory> Request[35] Inventory[204821708183:Location:141810852] [Team_CoreGameplayFeatures][Inventory]";
+        Assert.False(parser.TryParse(Entry(stationQuery), out _));
+    }
+
+    [Fact]
+    public void Nested_container_is_dispatched_end_to_end_by_the_aggregate_parser()
+    {
+        // Through the full parser: the open line is claimed by ContainerOpenedParser (an open event),
+        // and the paired query yields the identification — proving parser ordering is correct.
+        var reader = new InventoryLogReader();
+        var events = reader.Read([
+            OpenBox("Carryable_TBO_InventoryContainer_4SCU"),
+            QueryNoise,
+            BoxQueryLine,
+        ]).ToList();
+
+        Assert.Contains(events, e => e is ContainerOpenedEvent);
+        var c = Assert.IsType<ContainerIdentifiedEvent>(Assert.Single(events, e => e is ContainerIdentifiedEvent));
+        Assert.Equal(681562156430, c.ContainerId);
+        Assert.Equal(4, c.ScuSize);
+    }
 }

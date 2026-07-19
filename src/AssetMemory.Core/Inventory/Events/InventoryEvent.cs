@@ -55,3 +55,16 @@ public sealed record StationIdentifiedEvent(
     string Player,
     long PlaceId,
     string StationCode) : InventoryEvent(Timestamp);
+
+/// <summary>
+/// A nested storage container (a "Stor-All" SCU box) was opened, tying its persistent
+/// <see cref="ContainerId"/> (the GEID that owns the <c>GEID:Container:0</c> ref its holdings key
+/// off) to the class it was placed from (e.g. <c>Carryable_TBO_InventoryContainer_2SCU</c>) and the
+/// derived <see cref="ScuSize"/>. Recovered by pairing an <c>OpenNestedInventory</c> request (carries
+/// the class) with the <c>Query Inventory</c> line that reports the box's numeric container ref.
+/// </summary>
+public sealed record ContainerIdentifiedEvent(
+    DateTimeOffset Timestamp,
+    long ContainerId,
+    string ContainerClass,
+    int ScuSize) : InventoryEvent(Timestamp);
