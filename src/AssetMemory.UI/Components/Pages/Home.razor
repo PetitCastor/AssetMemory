@@ -65,6 +65,16 @@
     {
         <div class="toolbar">
             <div class="filter-group">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                <select @bind="SelectedSystem">
+                    <option value="">All systems</option>
+                    @foreach (var s in Systems)
+                    {
+                        <option value="@s">@s</option>
+                    }
+                </select>
+            </div>
+            <div class="filter-group">
                 <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
                 <select @bind="SelectedPlace">
                     <option value="">All locations</option>
@@ -286,6 +296,7 @@
     private static readonly int[] PageSizeOptions = [10, 25, 50, 100];
 
     private HoldingDetailsPage _pageResult = new([], 0, 0, 0);
+    private List<string> Systems = [];
     private List<LocationRow> Places = [];
     private List<LocationRow> Containers = [];
 
@@ -296,9 +307,18 @@
         set { _searchTerm = value; _page = 1; LoadData(); }
     }
 
-    // The top dropdown picks a place (station / local storage); when that place has stocked
-    // containers a second dropdown appears to drill into one. Changing the place clears any
-    // container selection since it no longer applies.
+    // The top dropdown picks a system (Stanton / Nyx / Pyro / Other — jump points fold into their
+    // origin system, not a bucket of their own); the second picks
+    // a place (station / local storage) within it, narrowing the place list; when that place has
+    // stocked containers a third dropdown appears to drill into one. Changing a broader selection
+    // clears the narrower ones since they no longer apply.
+    private string _selectedSystem = "";
+    private string SelectedSystem
+    {
+        get => _selectedSystem;
+        set { _selectedSystem = value; _selectedPlace = ""; _selectedContainer = ""; _page = 1; LoadData(); }
+    }
+
     private string _selectedPlace = "";
     private string SelectedPlace
     {
@@ -338,23 +358,27 @@
     private string ChannelName =>
         Path.GetFileName(Path.GetDirectoryName(Settings.GameLogPath ?? "") ?? "");
 
-    // "All locations" / "{Place}" / "{Place} › {Container}" — mirrors the rollup rules in
-    // Store.GetHoldingDetailsPage (neither selected = everything, place only = place + child boxes).
+    // "All locations" / "{System}" / "{System} › {Place}" / "{System} › {Place} › {Container}" —
+    // mirrors the rollup rules in Store.GetHoldingDetailsPage (nothing selected = everything,
+    // system only = every place + box tagged with it, place only = place + child boxes).
     private string Breadcrumb
     {
         get
         {
-            if (string.IsNullOrEmpty(SelectedPlace))
+            if (string.IsNullOrEmpty(SelectedSystem))
                 return "All locations";
+
+            if (string.IsNullOrEmpty(SelectedPlace))
+                return SelectedSystem;
 
             var placeLabel = Places.FirstOrDefault(p => p.Id.ToString() == SelectedPlace)?.Label
                 ?? $"Location {SelectedPlace}";
             if (string.IsNullOrEmpty(SelectedContainer))
-                return placeLabel;
+                return $"{SelectedSystem} › {placeLabel}";
 
             var containerLabel = Containers.FirstOrDefault(c => c.Id.ToString() == SelectedContainer)?.Label
                 ?? $"Container {SelectedContainer}";
-            return $"{placeLabel} › {containerLabel}";
+            return $"{SelectedSystem} › {placeLabel} › {containerLabel}";
         }
     }
 
@@ -523,13 +547,16 @@
 
     private void LoadData()
     {
+        var system = string.IsNullOrEmpty(SelectedSystem) ? null : SelectedSystem;
         long? placeId = long.TryParse(SelectedPlace, out var pid) ? pid : null;
         long? containerId = long.TryParse(SelectedContainer, out var cid) ? cid : null;
         var term = string.IsNullOrWhiteSpace(SearchTerm) ? null : SearchTerm.Trim();
 
-        // A place rolls up its containers' contents; a chosen container narrows to just that box.
-        _pageResult = Store.GetHoldingDetailsPage(placeId, containerId, term, SortColumn, SortAsc, _page, _pageSize);
-        Places = Store.GetPlacesWithHoldings().ToList();
+        // A system rolls up every place (and its boxes) tagged with it; a place further rolls up its
+        // containers' contents; a chosen container narrows to just that box.
+        _pageResult = Store.GetHoldingDetailsPage(placeId, containerId, term, SortColumn, SortAsc, _page, _pageSize, system);
+        Systems = Store.GetSystemsWithHoldings().ToList();
+        Places = Store.GetPlacesWithHoldings(system).ToList();
         Containers = placeId is not null
             ? Store.GetContainersForPlace(placeId.Value).ToList()
             : [];

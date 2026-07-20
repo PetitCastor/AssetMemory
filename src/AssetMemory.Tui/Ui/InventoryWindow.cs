@@ -19,6 +19,7 @@ public sealed class InventoryWindow : Window
 
     // Query state (mirrors Home.razor)
     private string _searchTerm = "";
+    private string? _selectedSystem;
     private long? _selectedPlaceId;
     private long? _selectedContainerId;
     private string _sortColumn = "item";
@@ -27,11 +28,13 @@ public sealed class InventoryWindow : Window
     private int _pageSize = 25;
 
     private HoldingDetailsPage _pageResult = new([], 0, 0, 0);
+    private List<string> _systems = [];
     private List<LocationRow> _places = [];
     private List<LocationRow> _containers = [];
 
     // Controls
     private readonly TextField _searchField;
+    private readonly Button _systemBtn;
     private readonly Button _locBtn;
     private readonly Button _containerBtn;
     private readonly Button _pageSizeBtn;
@@ -57,7 +60,8 @@ public sealed class InventoryWindow : Window
         // --- Row 0: search + filters ---
         var searchLabel = new Label { X = 1, Y = 0, Text = "Search:" };
         _searchField = new TextField { X = 9, Y = 0, Width = 28, Text = "" };
-        _locBtn = new Button { X = Pos.Right(_searchField) + 2, Y = 0, Text = "Place: All" };
+        _systemBtn = new Button { X = Pos.Right(_searchField) + 2, Y = 0, Text = "System: All" };
+        _locBtn = new Button { X = Pos.Right(_systemBtn) + 1, Y = 0, Text = "Place: All" };
         // Only shown once the selected place has stocked containers to drill into.
         _containerBtn = new Button { X = Pos.Right(_locBtn) + 1, Y = 0, Text = "Container: (local)", Visible = false };
         _pageSizeBtn = new Button { X = Pos.Right(_containerBtn) + 1, Y = 0, Text = "Per page: 25" };
@@ -102,6 +106,7 @@ public sealed class InventoryWindow : Window
             Reload();
         };
 
+        _systemBtn.Accepting += (_, _) => PickSystem();
         _locBtn.Accepting += (_, _) => PickPlace();
         _containerBtn.Accepting += (_, _) => PickContainer();
         _pageSizeBtn.Accepting += (_, _) =>
@@ -151,7 +156,7 @@ public sealed class InventoryWindow : Window
 
         inceptionBtn.Accepting += (_, _) => PickInception();
 
-        Add(searchLabel, _searchField, _locBtn, _containerBtn, _pageSizeBtn, refreshBtn,
+        Add(searchLabel, _searchField, _systemBtn, _locBtn, _containerBtn, _pageSizeBtn, refreshBtn,
             sortLabel, _itemSortBtn, _locSortBtn, _qtySortBtn, _seenSortBtn,
             _breadcrumbLabel,
             _table,
@@ -191,9 +196,28 @@ public sealed class InventoryWindow : Window
         _seenSortBtn.Text = "Last seen" + Arrow("seen");
     }
 
+    private void PickSystem()
+    {
+        _systems = _store.GetSystemsWithHoldings().ToList();
+        var items = new List<string> { "All systems" };
+        items.AddRange(_systems);
+
+        var current = _selectedSystem is null ? 0 : _systems.IndexOf(_selectedSystem) + 1;
+
+        var choice = Modals.ChooseFromList("Filter by system", items, current);
+        if (choice < 0)
+            return;
+
+        _selectedSystem = choice == 0 ? null : _systems[choice - 1];
+        _selectedPlaceId = null;      // a new system invalidates any place/container selection
+        _selectedContainerId = null;
+        _page = 1;
+        Reload();
+    }
+
     private void PickPlace()
     {
-        _places = _store.GetPlacesWithHoldings().ToList();
+        _places = _store.GetPlacesWithHoldings(_selectedSystem).ToList();
         var items = new List<string> { "All locations" };
         items.AddRange(_places.Select(l => l.Label ?? $"Location {l.Id}"));
 
@@ -271,9 +295,11 @@ public sealed class InventoryWindow : Window
     {
         var term = string.IsNullOrWhiteSpace(_searchTerm) ? null : _searchTerm.Trim();
 
-        // A place rolls up its containers' contents; a chosen container narrows to just that box.
-        _pageResult = _store.GetHoldingDetailsPage(_selectedPlaceId, _selectedContainerId, term, _sortColumn, _sortAsc, _page, _pageSize);
-        _places = _store.GetPlacesWithHoldings().ToList();
+        // A system rolls up every place (and its boxes) tagged with it; a place further rolls up its
+        // containers' contents; a chosen container narrows to just that box.
+        _pageResult = _store.GetHoldingDetailsPage(_selectedPlaceId, _selectedContainerId, term, _sortColumn, _sortAsc, _page, _pageSize, _selectedSystem);
+        _systems = _store.GetSystemsWithHoldings().ToList();
+        _places = _store.GetPlacesWithHoldings(_selectedSystem).ToList();
         _containers = _selectedPlaceId is { } placeId
             ? _store.GetContainersForPlace(placeId).ToList()
             : [];
@@ -290,6 +316,9 @@ public sealed class InventoryWindow : Window
         _prevBtn.Enabled = _page > 1;
         _nextBtn.Enabled = _page < totalPages;
 
+        var systemName = _selectedSystem ?? "All";
+        _systemBtn.Text = $"System: {systemName}";
+
         var placeName = _selectedPlaceId is null
             ? "All"
             : _places.FirstOrDefault(l => l.Id == _selectedPlaceId)?.Label ?? $"#{_selectedPlaceId}";
@@ -302,11 +331,13 @@ public sealed class InventoryWindow : Window
             : _containers.FirstOrDefault(c => c.Id == _selectedContainerId)?.Label ?? $"#{_selectedContainerId}";
         _containerBtn.Text = $"Container: {containerName}";
 
-        _breadcrumbLabel.Text = _selectedPlaceId is null
+        _breadcrumbLabel.Text = _selectedSystem is null
             ? "All locations"
-            : _selectedContainerId is null
-                ? placeName
-                : $"{placeName} › {containerName}";
+            : _selectedPlaceId is null
+                ? systemName
+                : _selectedContainerId is null
+                    ? $"{systemName} › {placeName}"
+                    : $"{systemName} › {placeName} › {containerName}";
 
         var mode = _actions.IsViewer ? "viewer" : "standalone";
         var syncing = _actions.IsInitialSyncing ? "  (initial sync…)" : "";

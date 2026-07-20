@@ -14,12 +14,16 @@ public sealed class EventApplier
     private readonly AssetMemoryStore _store;
     private readonly IItemNameResolver _names;
     private readonly IStationNameResolver _stations;
+    private readonly ISystemNameResolver _systems;
 
-    public EventApplier(AssetMemoryStore store, IItemNameResolver names, IStationNameResolver? stations = null)
+    public EventApplier(
+        AssetMemoryStore store, IItemNameResolver names,
+        IStationNameResolver? stations = null, ISystemNameResolver? systems = null)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _names = names ?? throw new ArgumentNullException(nameof(names));
         _stations = stations ?? new StationNameResolver();
+        _systems = systems ?? new SystemNameResolver();
     }
 
     /// <summary>
@@ -119,8 +123,9 @@ public sealed class EventApplier
     private void ApplyStation(StationIdentifiedEvent station)
     {
         var label = _stations.Resolve(station.StationCode);
+        var system = _systems.Resolve(station.StationCode);
         _store.UpsertLocation(station.PlaceId, station.Timestamp,
-            string.IsNullOrEmpty(label) ? null : label);
+            string.IsNullOrEmpty(label) ? null : label, system);
     }
 
     // Labels the box's holdings key (its GEID) so its contents surface, and records the place it
