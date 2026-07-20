@@ -11,26 +11,15 @@
 @inject SyncService SyncSvc
 @inject GameLogCollector Collector
 @inject ControlService Control
-@inject IJSRuntime JS
 
-<PageTitle>AssetMemory</PageTitle>
+<PageTitle>Asset Memory - We remember for you</PageTitle>
 
 <div class="inventory-container">
     <header class="inventory-header">
         <div>
-            <h1>AssetMemory</h1>
+            <h1>Asset Memory - We remember for you</h1>
             <span class="subtitle">Star Citizen inventory tracker</span>
         </div>
-        <button class="theme-btn" @onclick="ToggleTheme" title="Toggle dark/light mode">
-            @if (_theme == "dark")
-            {
-                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-            }
-            else
-            {
-                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-            }
-        </button>
     </header>
 
     @if (string.IsNullOrEmpty(Settings.GameLogPath))
@@ -343,7 +332,6 @@
         set { _pageSize = value; _page = 1; LoadData(); }
     }
     private int TotalPages => Math.Max(1, (int)Math.Ceiling((double)_pageResult.TotalCount / _pageSize));
-    private string _theme = "dark";
     private string? _syncMessage;
     private string PathInput { get; set; } = "";
     private string? _pathError;
@@ -398,26 +386,6 @@
     }
 
     public void Dispose() => _refreshTimer?.Dispose();
-
-    protected override async Task OnAfterRenderAsync(bool firstRender)
-    {
-        if (firstRender)
-        {
-            var saved = await JS.InvokeAsync<string?>("getTheme");
-            if (saved is not null)
-            {
-                _theme = saved;
-                StateHasChanged();
-            }
-        }
-    }
-
-    private async Task ToggleTheme()
-    {
-        _theme = _theme == "dark" ? "light" : "dark";
-        await JS.InvokeVoidAsync("localStorage.setItem", "theme", _theme);
-        await JS.InvokeVoidAsync("setTheme", _theme);
-    }
 
     private void AutoDetect()
     {
