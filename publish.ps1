@@ -1,11 +1,12 @@
 # Builds the self-contained, zero-install Windows distributables and zips them for sharing.
 #
-#   ./publish.ps1               -> both editions into dist/
-#   ./publish.ps1 -WebOnly      -> just the Blazor tray/web edition
-#   ./publish.ps1 -TuiOnly      -> just the console (TUI) edition
-#   ./publish.ps1 -NoZip        -> publish folders only, no archives
+#   ./publish.ps1                  -> all three editions into dist/
+#   ./publish.ps1 -WebOnly         -> just the Blazor tray/web edition
+#   ./publish.ps1 -TuiOnly         -> just the console (TUI) edition
+#   ./publish.ps1 -StandaloneOnly  -> just the single-exe web edition
+#   ./publish.ps1 -NoZip           -> publish folders only, no archives
 #
-# Two editions over the same Core/Data/Collector layer:
+# Three editions over the same Core/Data/Collector layer:
 #
 #   Web (AssetMemory.exe)      - tray app + Blazor UI on http://localhost:9222. Self-contained but
 #                                a multi-file drop: the whole folder is required (wwwroot/ + the
@@ -15,7 +16,13 @@
 #                                Runs standalone, or attaches as a read-only viewer to a running web
 #                                instance and delegates writes to it. -> dist/AssetMemory-Tui-win-x64.zip
 #
-# Both are self-contained (no .NET runtime needed on the target). App data (settings.json,
+#   Standalone (AssetMemory.Standalone.exe) - same tray + Blazor UI as the Web edition, but every
+#                                static asset is embedded in the assembly (StaticWebAssetsEnabled=
+#                                false + a custom embedded-resource file provider, see Program.cs),
+#                                so the publish folder really is just the one exe.
+#                                -> dist/AssetMemory-Standalone-win-x64.zip
+#
+# All three are self-contained (no .NET runtime needed on the target). App data (settings.json,
 # assetmemory.db) lives in %LOCALAPPDATA%\AssetMemory, not next to the exe — so it survives
 # redeploys and never ends up inside dist/*.zip. AppPaths.EnsureReady() migrates a legacy
 # next-to-exe install on first run of a build that has the new path.
@@ -23,7 +30,8 @@
 param(
     [switch]$NoZip,
     [switch]$WebOnly,
-    [switch]$TuiOnly
+    [switch]$TuiOnly,
+    [switch]$StandaloneOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -65,7 +73,7 @@ function Publish-Web {
 
 function Publish-Tui {
     $project = Join-Path $root 'src\AssetMemory.Tui'
-    $publishDir = Join-Path $project 'bin\Release\net10.0-windows\win-x64\publish'
+    $publishDir = Join-Path $project 'bin\Release\net10.0\win-x64\publish'
 
     Write-Host "Publishing self-contained win-x64 TUI build..." -ForegroundColor Cyan
     if (Test-Path $publishDir) { Remove-Item -Recurse -Force $publishDir }
@@ -83,7 +91,27 @@ function Publish-Tui {
     if (-not $NoZip) { Compress-Edition -PublishDir $publishDir -ZipName 'AssetMemory-Tui-win-x64.zip' }
 }
 
-if ($WebOnly -and $TuiOnly) { throw "Pass at most one of -WebOnly / -TuiOnly." }
+function Publish-Standalone {
+    $project = Join-Path $root 'src\AssetMemory.Standalone'
+    $publishDir = Join-Path $project 'bin\Release\net10.0-windows\win-x64\publish'
 
-if (-not $TuiOnly) { Publish-Web }
-if (-not $WebOnly) { Publish-Tui }
+    Write-Host "Publishing self-contained win-x64 STANDALONE build..." -ForegroundColor Cyan
+    if (Test-Path $publishDir) { Remove-Item -Recurse -Force $publishDir }
+    dotnet publish $project -c Release
+    if ($LASTEXITCODE -ne 0) { throw "dotnet publish (standalone) failed (exit $LASTEXITCODE)" }
+
+    $exe = Join-Path $publishDir 'AssetMemory.Standalone.exe'
+    if (-not (Test-Path $exe)) { throw "Expected exe not found at $exe" }
+
+    $sizeMb = [math]::Round((Get-Item $exe).Length / 1MB, 1)
+    Write-Host "Published: $publishDir  (AssetMemory.Standalone.exe = $sizeMb MB)" -ForegroundColor Green
+
+    if (-not $NoZip) { Compress-Edition -PublishDir $publishDir -ZipName 'AssetMemory-Standalone-win-x64.zip' }
+}
+
+$onlySwitches = @($WebOnly, $TuiOnly, $StandaloneOnly) | Where-Object { $_ }
+if ($onlySwitches.Count -gt 1) { throw "Pass at most one of -WebOnly / -TuiOnly / -StandaloneOnly." }
+
+if (-not $TuiOnly -and -not $StandaloneOnly) { Publish-Web }
+if (-not $WebOnly -and -not $StandaloneOnly) { Publish-Tui }
+if (-not $WebOnly -and -not $TuiOnly) { Publish-Standalone }

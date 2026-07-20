@@ -1,0 +1,61 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <ProjectReference Include="..\AssetMemory.Data\AssetMemory.Data.csproj" />
+    <ProjectReference Include="..\AssetMemory.Core\AssetMemory.Core.csproj" />
+    <ProjectReference Include="..\AssetMemory.Collector\AssetMemory.Collector.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.9" />
+  </ItemGroup>
+
+  <!-- Everything the app serves over HTTP is embedded straight into the assembly (see
+       EmbeddedFileProvider wiring in Program.cs) instead of living under wwwroot/, so
+       StaticWebAssetsEnabled=false below leaves nothing for that pipeline to copy out to the
+       publish folder. LogicalName controls the URL path each resource is served at. -->
+  <ItemGroup>
+    <EmbeddedResource Include="EmbeddedAssets\app.css">
+      <LogicalName>app.css</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="EmbeddedAssets\blazor.web.js">
+      <LogicalName>_framework/blazor.web.js</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="EmbeddedAssets\reconnect.js">
+      <LogicalName>reconnect.js</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\AssetMemory.Tui\Resources\app-icon.ico">
+      <LogicalName>app-icon.ico</LogicalName>
+      <Link>Resources\app-icon.ico</Link>
+    </EmbeddedResource>
+  </ItemGroup>
+
+  <PropertyGroup>
+    <!-- See AssetMemory.UI.csproj for why UseWindowsForms + Sdk.Web needs blazor.web.js vendored
+         rather than relying on the framework's own static web assets pack — same reasoning
+         applies here, it's just embedded instead of copied into wwwroot. -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <OutputType>WinExe</OutputType>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <BlazorDisableThrowNavigationException>true</BlazorDisableThrowNavigationException>
+    <AssemblyName>AssetMemory.Standalone</AssemblyName>
+    <ApplicationIcon>..\AssetMemory.Tui\Resources\app-icon.ico</ApplicationIcon>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <!-- Embed symbols so the publish folder has no loose .pdb files to ship. -->
+    <DebugType>embedded</DebugType>
+    <!-- ...and don't drag the referenced projects' .pdb/.xml into the publish folder either. -->
+    <AllowedReferenceRelatedFileExtensions>none</AllowedReferenceRelatedFileExtensions>
+    <!-- No wwwroot/, no *.staticwebassets.endpoints.json, no appsettings*.json copy step to fight
+         the single-file bundle — everything static is embedded (see above). -->
+    <StaticWebAssetsEnabled>false</StaticWebAssetsEnabled>
+    <!-- This app self-hosts via Kestrel directly (see Program.cs) and never runs under IIS/ANCM,
+         so web.config (IIS reverse-proxy config) is dead weight — excluded from publish outright. -->
+    <PublishIISAssets>false</PublishIISAssets>
+  </PropertyGroup>
+
+</Project>
