@@ -1,36 +1,50 @@
-```
-   ╭─────╮
-   │     │
-   │     │
-   ╰─────╯
-         ╲
-          ╲
-           ╲
-```
+<img src="src/AssetMemory/Resources/app-icon.ico" width="96" alt="AssetMemory icon" />
 
 # AssetMemory
 
-*"Where the heck did I put my medpens?" — every Star Citizen player, every single play session*
+**Asset Memory — We remember for you.**
 
-A local inventory tracker for Star Citizen. It tails your `Game.log` in the background like a small, well-behaved stalker, and remembers where every item ended up — so you can stop opening forty-seven containers across three star systems looking for one (1) bottle of Synergy.
+A local inventory tracker for Star Citizen. It watches your `Game.log` in the background and remembers where every item ended up, so you stop opening forty-seven containers across three star systems looking for one (1) bottle of Synergy.
 
-It cannot find your ship. It cannot find your sanity after a server crash ate your loot run. It can, however, tell you with great confidence that the rifle you swear you picked up is, in fact, sitting in a box in New Babbage where you left it eleven days ago.
+## What it offers
 
-## How it works
+- A searchable, sortable, paginated inventory table served locally at `http://localhost:9222`.
+- Filtering that cascades **System → Place → Container** (e.g. Nyx → Nyx Castra Jump Point → a Stor-All box), with a breadcrumb showing exactly what's in view.
+- Runs quietly in the **system tray** — no console window, no browser tab forced open. Right-click for Open/Exit; launching it twice just reopens the UI instead of starting a duplicate.
+- Ships as a single self-contained executable. No .NET runtime to install, no companion files to lose track of.
 
-- A background collector tails `Game.log` (and can re-sync historical backup logs) for inventory move, equip, and container events — silently, in the background, judging none of your hoarding habits.
-- Events are stored in a local SQLite database as a discovery ledger — locations and quantities are derived purely from what the log reveals. Containers (Stor-All boxes, etc.) nest under the station/place they sit at, so moving an item into a box doesn't make it disappear from view. No item left un-spreadsheeted.
-- Numeric location/player/entity IDs are auto-resolved into readable names (player handle, worn-item name, "New Babbage" instead of `3170699229`) using data already present in the log or your game's `global.ini` — no telemetry, no analytics, nothing sent anywhere by default. The one exception: item classes with no local name are looked up once against `api.star-citizen.wiki` (rate-limited, cached locally so it's never repeated) — see [Attribution](#attribution).
-- You can set a "track from" date to ignore everything before it, and rebuild your history on demand — both persist across restarts.
-- A Blazor Server UI serves a searchable, sortable inventory table at `http://localhost:9222`, complete with pagination, because apparently some of us own 300+ distinct items and a flat unpaginated list was a war crime.
+## How it tracks your inventory
 
-## Running
+AssetMemory tails `Game.log` the same way the game itself writes to it — live, in the background. Every item move, equip, and container open/close the log records gets parsed into a typed event and applied to a local SQLite database.
+
+That database is a **discovery ledger**, not a snapshot: locations and quantities are derived purely from what the log has revealed, event by event. Nothing is guessed. If you've never opened a container, AssetMemory doesn't know it exists; the moment you do, it starts tracking everything that happens to it. Containers (Stor-All boxes, etc.) nest under the station or place they physically sit at, so moving an item into a box doesn't make it disappear from view — it just shows up one level deeper.
+
+Numeric location/player/entity IDs from the log get resolved into readable names (a player handle, a worn item's name, "New Babbage" instead of `3170699229`) using data already present in the log or your game's `global.ini`. No telemetry, no analytics, nothing sent anywhere by default — the one exception is the wiki lookup below.
+
+## Tracking from a starting date
+
+By default AssetMemory ingests your entire log history, including rotated backup logs, from the very first session it can find. If you'd rather it only remember what happens from a certain point forward, set a **"track from"** date in the UI: everything before that date is dropped, and the database is rebuilt from the remaining events.
+
+That bound persists across restarts — set it once and every future sync (manual or automatic) respects it. Change your mind later and hit **"Ingest all"** to go back to full history; either action triggers a full rebuild from the log, so it fully replaces the tracked data rather than merging two views of it.
+
+## The star-citizen.wiki hook
+
+Most item names come for free — either straight from the log or from your game's own `global.ini` localization file. For the items that have neither (newer or less common gear), AssetMemory looks the class name up **once** against [api.star-citizen.wiki](https://star-citizen.wiki), caches the result locally, and never asks again for that item. Lookups are rate-limited and run in the background at startup — they never block the UI, and a restart won't re-trigger lookups already resolved.
+
+## Download & run
+
+1. Grab `AssetMemory-win-x64.zip` and unzip it anywhere — there's just the one file inside, `AssetMemory.exe`.
+2. Run it. It starts hidden in the system tray; right-click the tray icon and pick **Open** (or just double-click it) to open the UI in your browser.
+3. First time only: point it at your Star Citizen install folder (auto-detect usually finds it, or enter the path manually).
+4. That's it. It tracks automatically from then on — open your inventory in-game and refresh the page to see it show up.
+
+Don't have a prebuilt zip? Build one yourself from the repo root:
 
 ```
-dotnet run --project src/AssetMemory
+./publish.ps1
 ```
 
-On first launch, point it at your Star Citizen install folder (auto-detect or manual path). It starts tracking automatically from then on — no further effort required from you, which, statistically, is the part of this project you'll appreciate most.
+This produces `dist/AssetMemory-win-x64.zip`. Your data (`settings.json`, `assetmemory.db`) lives in `%LOCALAPPDATA%\AssetMemory`, never next to the exe, so moving or replacing the install never touches it. The exe is unsigned, so Windows SmartScreen may warn on first run — "More info" → "Run anyway".
 
 ## Project layout
 
@@ -40,33 +54,11 @@ On first launch, point it at your Star Citizen install folder (auto-detect or ma
 - `src/AssetMemory.Collector` — log tailing and the collector background service
 - `tests/` — matching test project per `src/` project, using real captured log fixtures
 
-## Tests
-
 ```
-dotnet test
+dotnet run --project src/AssetMemory   # run from source
+dotnet test                            # run the test suite
 ```
-
-## Packaging & distribution
-
-The app ships as a single self-contained Windows executable — no .NET runtime needs to be installed on the target machine. When launched it runs in the **system tray** (no console window), opens the inventory UI in your default browser, and keeps collecting in the background. Right-click the tray icon for **Open** / **Exit**; launching it a second time just re-opens the UI rather than starting a duplicate.
-
-Build the distributable from the repo root:
-
-```
-./publish.ps1
-```
-
-This produces `dist/AssetMemory-win-x64.zip` (~56 MB). To share it: send that zip; the recipient unzips it and runs `AssetMemory.exe` — that's the whole install, nothing else needed alongside it. Its data (`settings.json`, `assetmemory.db`) lives in `%LOCALAPPDATA%\AssetMemory`, not next to the exe, so redeploying or moving the install never touches it.
-
-Notes:
-- `./publish.ps1 -NoZip` produces just the publish folder without archiving.
-- It's a genuine single-file exe — every static asset (CSS, the vendored `blazor.web.js`, the app icon) is embedded in the assembly, not shipped as loose files next to it.
-- The exe is unsigned, so Windows SmartScreen may warn on first run ("More info" → "Run anyway"). Code-signing is a future step.
 
 ## Attribution
 
 Item names not found in your game's `global.ini` are looked up against [api.star-citizen.wiki](https://star-citizen.wiki), credited here per its terms of use.
-
----
-
-*No items were harmed in the making of this tracker. Several were, however, finally located.*
