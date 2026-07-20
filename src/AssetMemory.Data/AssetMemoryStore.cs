@@ -72,6 +72,10 @@ public sealed class AssetMemoryStore
                 type TEXT NOT NULL,
                 raw  TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS external_item_names (
+                class_name   TEXT PRIMARY KEY,
+                display_name TEXT NOT NULL
+            );
             """);
 
         // v1 -> v2: the place->container hierarchy adds locations.parent_id. Fresh DBs get it from
@@ -167,20 +171,52 @@ public sealed class AssetMemoryStore
 
     // -------- items --------
 
+    /// <summary>
+    /// Inserts or updates an item's display name. A row in <c>external_item_names</c> (durable —
+    /// survives <see cref="ClearAll"/> and sync-inception rebuilds) always wins over the freshly
+    /// computed <paramref name="displayName"/>: without this, "Start fresh" / changing the sync
+    /// inception date wipes and rebuilds the <c>items</c> table from the log, and the rebuild only
+    /// knows global.ini + the heuristic formatter, so a name backfilled from the external API earlier
+    /// would silently revert until the next full app restart re-ran the backfill sweep.
+    /// </summary>
     public long EnsureItem(string className, string? displayName)
     {
         ArgumentException.ThrowIfNullOrEmpty(className);
         using var cmd = _conn.CreateCommand();
         cmd.CommandText = """
             INSERT INTO items (class_name, display_name)
-            VALUES ($cn, $dn)
+            VALUES ($cn, COALESCE((SELECT display_name FROM external_item_names WHERE class_name = $cn), $dn))
             ON CONFLICT(class_name) DO UPDATE SET
-                display_name = COALESCE(excluded.display_name, display_name)
+                display_name = COALESCE(
+                    (SELECT display_name FROM external_item_names WHERE class_name = $cn),
+                    excluded.display_name,
+                    display_name)
             RETURNING id;
             """;
         cmd.Parameters.AddWithValue("$cn", className);
         cmd.Parameters.AddWithValue("$dn", (object?)displayName ?? DBNull.Value);
         return Convert.ToInt64(cmd.ExecuteScalar(), CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>
+    /// Durably caches an externally-resolved display name, independent of <c>items</c> so it isn't
+    /// lost when that table gets wiped and rebuilt (see <see cref="EnsureItem"/>). Never cleared by
+    /// <see cref="ClearAll"/> — it's item-catalog knowledge, not user inventory data, and re-deriving
+    /// it means hitting the (rate-limited) external API again for no reason.
+    /// </summary>
+    public void UpsertExternalItemName(string className, string displayName)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(className);
+        ArgumentException.ThrowIfNullOrEmpty(displayName);
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO external_item_names (class_name, display_name)
+            VALUES ($cn, $dn)
+            ON CONFLICT(class_name) DO UPDATE SET display_name = excluded.display_name;
+            """;
+        cmd.Parameters.AddWithValue("$cn", className);
+        cmd.Parameters.AddWithValue("$dn", displayName);
+        cmd.ExecuteNonQuery();
     }
 
     public ItemRow? GetItem(string className)
@@ -635,6 +671,7 @@ public sealed class AssetMemoryStore
 
     // -------- clear --------
 
+    // Deliberately does NOT touch external_item_names -- see EnsureItem/UpsertExternalItemName.
     public void ClearAll()
     {
         Exec("DELETE FROM events_audit;");

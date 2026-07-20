@@ -41,6 +41,9 @@ public sealed class ExternalItemNameBackfillService : BackgroundService
             var name = await _client.TryResolveAsync(item.ClassName, stoppingToken);
             if (name is not null)
             {
+                // Cache first so the name survives a later ClearAll (Start fresh / sync-inception
+                // rebuild) instead of reverting to the heuristic guess until the next app restart.
+                _store.UpsertExternalItemName(item.ClassName, name);
                 _store.EnsureItem(item.ClassName, name);
                 _logger.LogInformation("Resolved {ClassName} -> {Name} via star-citizen.wiki", item.ClassName, name);
             }
