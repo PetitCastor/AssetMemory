@@ -433,7 +433,9 @@ public sealed class AssetMemoryStore
     /// everything (places and containers). So an item moved into a box (from a backpack, local
     /// storage, anywhere) still shows under its parent place, and narrowing to the box shows only
     /// its contents. Filtering, sorting, and paging all happen in SQL so the UI never has to load
-    /// the whole holdings table to show one page of it.
+    /// the whole holdings table to show one page of it. <paramref name="searchTerm"/> matches
+    /// anywhere in the name by default; see <see cref="BuildSearchPattern"/> for opting into
+    /// <c>%</c>/<c>_</c> wildcards.
     /// </summary>
     public HoldingDetailsPage GetHoldingDetailsPage(
         long? placeId, long? containerId, string? searchTerm, string sortColumn, bool sortAscending, int page, int pageSize,
@@ -442,7 +444,7 @@ public sealed class AssetMemoryStore
         ArgumentOutOfRangeException.ThrowIfLessThan(page, 1);
         ArgumentOutOfRangeException.ThrowIfLessThan(pageSize, 1);
         var sortExpr = SortExpression(sortColumn);
-        var term = string.IsNullOrWhiteSpace(searchTerm) ? null : $"%{searchTerm}%";
+        var term = string.IsNullOrWhiteSpace(searchTerm) ? null : BuildSearchPattern(searchTerm);
 
         // Scope precedence: a chosen container pins to itself; otherwise a chosen place includes its
         // own rows and any container whose parent_id points back at it; otherwise a chosen system
@@ -519,6 +521,18 @@ public sealed class AssetMemoryStore
         "seen" => "h.last_seen_utc",
         _ => throw new ArgumentException($"Unknown sort column '{column}'.", nameof(column)),
     };
+
+    /// <summary>
+    /// Builds a SQL LIKE pattern from a user-typed search term. A plain term (no <c>%</c> or
+    /// <c>_</c>) is wrapped in <c>%...%</c> for a "contains" match, same as always. A term that
+    /// already contains either character is passed through as-is, so a searcher can opt into SQL
+    /// LIKE's own wildcards for finer control -- <c>gun%</c> anchors to "starts with", <c>%rifle</c>
+    /// to "ends with", and <c>_</c> matches exactly one character. Trade-off: a term meant to search
+    /// for a literal <c>%</c>/<c>_</c> character is instead treated as a wildcard -- fine here since
+    /// item names never contain either.
+    /// </summary>
+    private static string BuildSearchPattern(string term)
+        => term.Contains('%') || term.Contains('_') ? term : $"%{term}%";
 
     /// <summary>Distinct labelled locations that currently hold at least one item -- backs the location filter dropdown.</summary>
     public IEnumerable<LocationRow> GetLocationsWithHoldings()
@@ -629,7 +643,7 @@ public sealed class AssetMemoryStore
             WHERE i.class_name LIKE $term OR i.display_name LIKE $term
             ORDER BY i.display_name, i.class_name;
             """;
-        cmd.Parameters.AddWithValue("$term", $"%{term}%");
+        cmd.Parameters.AddWithValue("$term", BuildSearchPattern(term));
         using var r = cmd.ExecuteReader();
         var list = new List<ItemRow>();
         while (r.Read())
