@@ -10,7 +10,7 @@ namespace AssetMemory.Data;
 /// </summary>
 public sealed class AssetMemoryStore
 {
-    private const int CurrentSchemaVersion = 2;
+    private const int CurrentSchemaVersion = 3;
 
     private readonly SqliteConnection _conn;
 
@@ -40,6 +40,7 @@ public sealed class AssetMemoryStore
                 id            INTEGER PRIMARY KEY,
                 label         TEXT,
                 parent_id     INTEGER,
+                system        TEXT,
                 last_seen_utc TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS items (
@@ -83,6 +84,10 @@ public sealed class AssetMemoryStore
         if (!ColumnExists("locations", "parent_id"))
             Exec("ALTER TABLE locations ADD COLUMN parent_id INTEGER;");
 
+        // v2 -> v3: the system-level filter (System -> Place -> Container) adds locations.system.
+        if (!ColumnExists("locations", "system"))
+            Exec("ALTER TABLE locations ADD COLUMN system TEXT;");
+
         Exec($"PRAGMA user_version = {CurrentSchemaVersion};");
     }
 
@@ -117,19 +122,21 @@ public sealed class AssetMemoryStore
 
     // -------- locations --------
 
-    public void UpsertLocation(long id, DateTimeOffset lastSeenUtc, string? label)
+    public void UpsertLocation(long id, DateTimeOffset lastSeenUtc, string? label, string? system = null)
     {
-        // Insert or update — but only overwrite an existing label if a non-null one is supplied.
+        // Insert or update — but only overwrite an existing label/system if a non-null one is supplied.
         using var cmd = _conn.CreateCommand();
         cmd.CommandText = """
-            INSERT INTO locations (id, label, last_seen_utc)
-            VALUES ($id, $label, $utc)
+            INSERT INTO locations (id, label, system, last_seen_utc)
+            VALUES ($id, $label, $system, $utc)
             ON CONFLICT(id) DO UPDATE SET
                 last_seen_utc = excluded.last_seen_utc,
-                label         = COALESCE(excluded.label, label);
+                label         = COALESCE(excluded.label, label),
+                system        = COALESCE(excluded.system, system);
             """;
         cmd.Parameters.AddWithValue("$id", id);
         cmd.Parameters.AddWithValue("$label", (object?)label ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$system", (object?)system ?? DBNull.Value);
         cmd.Parameters.AddWithValue("$utc", FormatUtc(lastSeenUtc));
         cmd.ExecuteNonQuery();
     }
@@ -429,7 +436,8 @@ public sealed class AssetMemoryStore
     /// the whole holdings table to show one page of it.
     /// </summary>
     public HoldingDetailsPage GetHoldingDetailsPage(
-        long? placeId, long? containerId, string? searchTerm, string sortColumn, bool sortAscending, int page, int pageSize)
+        long? placeId, long? containerId, string? searchTerm, string sortColumn, bool sortAscending, int page, int pageSize,
+        string? system = null)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(page, 1);
         ArgumentOutOfRangeException.ThrowIfLessThan(pageSize, 1);
@@ -437,7 +445,8 @@ public sealed class AssetMemoryStore
         var term = string.IsNullOrWhiteSpace(searchTerm) ? null : $"%{searchTerm}%";
 
         // Scope precedence: a chosen container pins to itself; otherwise a chosen place includes its
-        // own rows and any container whose parent_id points back at it; otherwise no location filter.
+        // own rows and any container whose parent_id points back at it; otherwise a chosen system
+        // includes every place (and its containers) tagged with it; otherwise no location filter.
         const string filterSql = """
             FROM holdings h
             JOIN items i ON i.id = h.item_id
@@ -447,6 +456,8 @@ public sealed class AssetMemoryStore
               AND ($container IS NULL OR h.location_id = $container)
               AND ($container IS NOT NULL OR $place IS NULL
                    OR h.location_id = $place OR l.parent_id = $place)
+              AND ($container IS NOT NULL OR $place IS NOT NULL OR $system IS NULL
+                   OR COALESCE(l.system, p.system, 'Other') = $system)
               AND ($term IS NULL OR i.display_name LIKE $term OR i.class_name LIKE $term)
             """;
 
@@ -457,6 +468,7 @@ public sealed class AssetMemoryStore
             """;
         countCmd.Parameters.AddWithValue("$place", (object?)placeId ?? DBNull.Value);
         countCmd.Parameters.AddWithValue("$container", (object?)containerId ?? DBNull.Value);
+        countCmd.Parameters.AddWithValue("$system", (object?)system ?? DBNull.Value);
         countCmd.Parameters.AddWithValue("$term", (object?)term ?? DBNull.Value);
         int totalCount; int distinctLocations; long totalUnits;
         using (var cr = countCmd.ExecuteReader())
@@ -478,6 +490,7 @@ public sealed class AssetMemoryStore
             """;
         cmd.Parameters.AddWithValue("$place", (object?)placeId ?? DBNull.Value);
         cmd.Parameters.AddWithValue("$container", (object?)containerId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$system", (object?)system ?? DBNull.Value);
         cmd.Parameters.AddWithValue("$term", (object?)term ?? DBNull.Value);
         cmd.Parameters.AddWithValue("$take", pageSize);
         cmd.Parameters.AddWithValue("$skip", (page - 1) * pageSize);
@@ -528,9 +541,10 @@ public sealed class AssetMemoryStore
     /// <summary>
     /// Labelled places (<c>parent_id IS NULL</c>) that either hold items directly or have a child
     /// container that does -- backs the top place dropdown. A place whose only holdings live inside
-    /// a box still appears here so the user can drill into it.
+    /// a box still appears here so the user can drill into it. When <paramref name="system"/> is
+    /// given, narrows to places tagged with that system bucket (see <see cref="GetSystemsWithHoldings"/>).
     /// </summary>
-    public IEnumerable<LocationRow> GetPlacesWithHoldings()
+    public IEnumerable<LocationRow> GetPlacesWithHoldings(string? system = null)
     {
         using var cmd = _conn.CreateCommand();
         cmd.CommandText = """
@@ -538,16 +552,45 @@ public sealed class AssetMemoryStore
             FROM locations l
             WHERE l.label IS NOT NULL
               AND l.parent_id IS NULL
+              AND ($system IS NULL OR COALESCE(l.system, 'Other') = $system)
               AND (EXISTS (SELECT 1 FROM holdings h WHERE h.location_id = l.id)
                 OR EXISTS (SELECT 1 FROM locations c
                            JOIN holdings hc ON hc.location_id = c.id
                            WHERE c.parent_id = l.id))
             ORDER BY l.label;
             """;
+        cmd.Parameters.AddWithValue("$system", (object?)system ?? DBNull.Value);
         using var r = cmd.ExecuteReader();
         var list = new List<LocationRow>();
         while (r.Read())
             list.Add(new LocationRow(r.GetInt64(0), r.GetString(1), ParseUtc(r.GetString(2))));
+        return list;
+    }
+
+    /// <summary>
+    /// Distinct system buckets (see <see cref="AssetMemory.Core.Resolution.SystemNameResolver"/>)
+    /// among places that either hold items directly or have a stocked child container -- backs the
+    /// top-level system dropdown. Places with no resolved system (e.g. freestanding local-storage
+    /// containers never seen at a station) count toward the <c>"Other"</c> bucket.
+    /// </summary>
+    public IEnumerable<string> GetSystemsWithHoldings()
+    {
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT DISTINCT COALESCE(l.system, 'Other')
+            FROM locations l
+            WHERE l.label IS NOT NULL
+              AND l.parent_id IS NULL
+              AND (EXISTS (SELECT 1 FROM holdings h WHERE h.location_id = l.id)
+                OR EXISTS (SELECT 1 FROM locations c
+                           JOIN holdings hc ON hc.location_id = c.id
+                           WHERE c.parent_id = l.id))
+            ORDER BY 1;
+            """;
+        using var r = cmd.ExecuteReader();
+        var list = new List<string>();
+        while (r.Read())
+            list.Add(r.GetString(0));
         return list;
     }
 

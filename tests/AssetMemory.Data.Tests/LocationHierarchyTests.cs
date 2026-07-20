@@ -19,7 +19,7 @@ public class LocationHierarchyTests
     // Place holds items directly AND has a stocked child box; an empty child box holds nothing.
     private static long Seed(AssetMemoryStore store)
     {
-        store.UpsertLocation(Place, T0, "Nyx Castra Jump Point");
+        store.UpsertLocation(Place, T0, "Nyx Castra Jump Point", "Nyx");
         store.UpsertContainer(Box, Place, T0, "Stor-All 2 SCU");
         store.UpsertContainer(EmptyBox, Place, T0, "Stor-All 8 SCU");
 
@@ -132,6 +132,94 @@ public class LocationHierarchyTests
     }
 
     [Fact]
+    public void GetSystemsWithHoldings_returns_distinct_buckets_for_stocked_places_only()
+    {
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            Seed(store); // Place is tagged "Nyx" and stocked
+            store.UpsertLocation(999, T0, "Some Stanton Hub", "Stanton"); // stocked, different system
+            store.UpsertLocation(998, T0, "Empty Pyro Outpost", "Pyro"); // no holdings anywhere
+
+            var item = store.EnsureItem("widget", "Widget");
+            store.AdjustHolding(999, item, 1, T0);
+
+            var systems = store.GetSystemsWithHoldings().ToList();
+            Assert.Contains("Nyx", systems);
+            Assert.Contains("Stanton", systems);
+            Assert.DoesNotContain("Pyro", systems); // stocked nowhere
+        }
+    }
+
+    [Fact]
+    public void GetSystemsWithHoldings_buckets_a_place_with_no_resolved_system_as_other()
+    {
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            // A freestanding local-storage place never tagged with a system (system left null).
+            store.UpsertLocation(Place, T0, "Stor-All 2 SCU");
+            var item = store.EnsureItem("widget", "Widget");
+            store.AdjustHolding(Place, item, 1, T0);
+
+            Assert.Equal("Other", Assert.Single(store.GetSystemsWithHoldings()));
+        }
+    }
+
+    [Fact]
+    public void GetPlacesWithHoldings_narrows_to_the_given_system()
+    {
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            Seed(store); // Place is tagged "Nyx"
+            store.UpsertLocation(999, T0, "Some Stanton Hub", "Stanton");
+            var item = store.EnsureItem("widget", "Widget");
+            store.AdjustHolding(999, item, 1, T0);
+
+            Assert.Equal(Place, Assert.Single(store.GetPlacesWithHoldings("Nyx")).Id);
+            Assert.Equal(999, Assert.Single(store.GetPlacesWithHoldings("Stanton")).Id);
+        }
+    }
+
+    [Fact]
+    public void GetHoldingDetailsPage_system_scope_rolls_up_every_place_and_box_under_it()
+    {
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            Seed(store); // Place ("Nyx"): 5 direct + 3 in Box = 8 units
+            store.UpsertLocation(999, T0, "Some Stanton Hub", "Stanton");
+            var item = store.EnsureItem("widget", "Widget");
+            store.AdjustHolding(999, item, 4, T0);
+
+            // System scope: only Nyx's 8 units, not Stanton's 4.
+            var nyx = store.GetHoldingDetailsPage(null, null, null, "item", true, 1, 50, "Nyx");
+            Assert.Equal(8, nyx.TotalUnits);
+
+            var stanton = store.GetHoldingDetailsPage(null, null, null, "item", true, 1, 50, "Stanton");
+            Assert.Equal(4, stanton.TotalUnits);
+
+            // No system filter still rolls up everything.
+            var all = store.GetHoldingDetailsPage(null, null, null, "item", true, 1, 50);
+            Assert.Equal(12, all.TotalUnits);
+        }
+    }
+
+    [Fact]
+    public void GetHoldingDetailsPage_container_and_place_scope_take_precedence_over_system()
+    {
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            Seed(store);
+            // A container/place scope narrows correctly even when an unrelated system is also passed.
+            Assert.Equal(3, store.GetHoldingDetailsPage(null, Box, null, "item", true, 1, 50, "Stanton").TotalUnits);
+            Assert.Equal(8, store.GetHoldingDetailsPage(Place, null, null, "item", true, 1, 50, "Stanton").TotalUnits);
+        }
+    }
+
+    [Fact]
     public void ApplyMigration_upgrades_a_legacy_v1_locations_table_in_place()
     {
         using var conn = new SqliteConnection("Data Source=:memory:");
@@ -154,12 +242,18 @@ public class LocationHierarchyTests
         var store = new AssetMemoryStore(conn);
         store.ApplyMigration();  // CREATE IF NOT EXISTS is a no-op on the existing table; ALTER adds the column
 
-        Assert.Equal(2, store.SchemaVersion);
-        // The column now exists and is writable via UpsertContainer.
+        Assert.Equal(3, store.SchemaVersion);
+        // Both columns added since v1 now exist and are writable.
         store.UpsertContainer(Box, Place, T0, "Stor-All 2 SCU");
+        store.UpsertLocation(Place, T0, "Nyx Castra Jump Point", "Nyx");
         using var q = conn.CreateCommand();
         q.CommandText = "SELECT parent_id FROM locations WHERE id = $id;";
         q.Parameters.AddWithValue("$id", Box);
         Assert.Equal(Place, Convert.ToInt64(q.ExecuteScalar()));
+
+        using var qs = conn.CreateCommand();
+        qs.CommandText = "SELECT system FROM locations WHERE id = $id;";
+        qs.Parameters.AddWithValue("$id", Place);
+        Assert.Equal("Nyx", Convert.ToString(qs.ExecuteScalar()));
     }
 }

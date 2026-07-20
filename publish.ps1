@@ -65,7 +65,7 @@ function Publish-Web {
 
 function Publish-Tui {
     $project = Join-Path $root 'src\AssetMemory.Tui'
-    $publishDir = Join-Path $project 'bin\Release\net10.0\win-x64\publish'
+    $publishDir = Join-Path $project 'bin\Release\net10.0-windows\win-x64\publish'
 
     Write-Host "Publishing self-contained win-x64 TUI build..." -ForegroundColor Cyan
     if (Test-Path $publishDir) { Remove-Item -Recurse -Force $publishDir }

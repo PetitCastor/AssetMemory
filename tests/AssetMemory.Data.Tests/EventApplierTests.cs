@@ -182,6 +182,22 @@ public class EventApplierTests
     }
 
     [Fact]
+    public void Station_identified_derives_and_persists_the_systems_bucket()
+    {
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            ApplierFor(store).Apply(new StationIdentifiedEvent(
+                T0, "Arrogant", PlaceId: 3170699229, StationCode: "Stanton4_NewBabbage"));
+            var item = store.EnsureItem("medpen", "Medpen");
+            store.AdjustHolding(3170699229, item, 1, T0);
+
+            Assert.Equal(3170699229, Assert.Single(store.GetPlacesWithHoldings("Stanton")).Id);
+            Assert.Empty(store.GetPlacesWithHoldings("Nyx"));
+        }
+    }
+
+    [Fact]
     public void Move_to_a_station_is_keyed_on_place_id_not_the_owning_geid()
     {
         // A station ref is GEID:Location:placeId — holdings must accrue under placeId (3170699229),
