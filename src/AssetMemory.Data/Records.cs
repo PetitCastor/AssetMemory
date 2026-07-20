@@ -25,6 +25,7 @@ public sealed record AuditRow(long Id, DateTimeOffset Utc, string Type, string R
 public sealed record HoldingDetail(
     long LocationId,
     string? LocationLabel,
+    string? LocationParentLabel,
     long ItemId,
     string ItemClassName,
     string? ItemDisplayName,
