@@ -1,14 +1,15 @@
 using System.Diagnostics;
+using System.Reflection;
 using AssetMemory.Collector;
 using AssetMemory.Collector.Control;
 using AssetMemory.Core.Detection;
 using AssetMemory.Core.Resolution;
 using AssetMemory.Data;
 using AssetMemory.Data.Events;
-using AssetMemory.UI.Components;
+using AssetMemory.Components;
 using Microsoft.Data.Sqlite;
 
-namespace AssetMemory.UI;
+namespace AssetMemory;
 
 internal static class Program
 {
@@ -134,8 +135,14 @@ internal static class Program
             app.UseExceptionHandler("/Error", createScopeForErrors: true);
         }
 
+        // No wwwroot: app.css/app-icon.ico/_framework/blazor.web.js/reconnect.js are embedded
+        // resources (see the csproj), served straight out of this assembly's manifest.
+        app.UseStaticFiles(new StaticFileOptions
+        {
+            FileProvider = new ManifestResourceFileProvider(Assembly.GetExecutingAssembly()),
+        });
+
         app.UseAntiforgery();
-        app.MapStaticAssets();
         app.MapRazorComponents<App>()
             .AddInteractiveServerRenderMode();
 

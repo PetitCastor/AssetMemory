@@ -2,7 +2,7 @@ using System.Reflection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Primitives;
 
-namespace AssetMemory.Standalone;
+namespace AssetMemory;
 
 /// <summary>
 /// Serves embedded resources whose <c>LogicalName</c> exactly matches the request subpath. The

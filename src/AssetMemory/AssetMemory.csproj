@@ -24,24 +24,21 @@
     <EmbeddedResource Include="EmbeddedAssets\reconnect.js">
       <LogicalName>reconnect.js</LogicalName>
     </EmbeddedResource>
-    <EmbeddedResource Include="..\AssetMemory.Tui\Resources\app-icon.ico">
+    <EmbeddedResource Include="Resources\app-icon.ico">
       <LogicalName>app-icon.ico</LogicalName>
-      <Link>Resources\app-icon.ico</Link>
     </EmbeddedResource>
   </ItemGroup>
 
   <PropertyGroup>
-    <!-- See AssetMemory.UI.csproj for why UseWindowsForms + Sdk.Web needs blazor.web.js vendored
-         rather than relying on the framework's own static web assets pack — same reasoning
-         applies here, it's just embedded instead of copied into wwwroot. -->
+    <!-- UseWindowsForms + Sdk.Web silently drops the framework's own static web assets pack (the
+         one that ships _framework/blazor.web.js), so it's vendored/embedded instead of relied on. -->
     <TargetFramework>net10.0-windows</TargetFramework>
     <OutputType>WinExe</OutputType>
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <BlazorDisableThrowNavigationException>true</BlazorDisableThrowNavigationException>
-    <AssemblyName>AssetMemory.Standalone</AssemblyName>
-    <ApplicationIcon>..\AssetMemory.Tui\Resources\app-icon.ico</ApplicationIcon>
+    <ApplicationIcon>Resources\app-icon.ico</ApplicationIcon>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>

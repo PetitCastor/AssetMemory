@@ -2,7 +2,7 @@ using System.Drawing;
 using System.Reflection;
 using System.Windows.Forms;
 
-namespace AssetMemory.Standalone;
+namespace AssetMemory;
 
 /// <summary>
 /// The system-tray presence for the app: a <see cref="NotifyIcon"/> with an "Open"/"Exit" menu.

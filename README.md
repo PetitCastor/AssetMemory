@@ -27,17 +27,17 @@ It cannot find your ship. It cannot find your sanity after a server crash ate yo
 ## Running
 
 ```
-dotnet run --project src/AssetMemory.UI
+dotnet run --project src/AssetMemory
 ```
 
 On first launch, point it at your Star Citizen install folder (auto-detect or manual path). It starts tracking automatically from then on — no further effort required from you, which, statistically, is the part of this project you'll appreciate most.
 
 ## Project layout
 
+- `src/AssetMemory` — Blazor Server UI + tray host, the app itself
 - `src/AssetMemory.Core` — log parsing, inventory events, name/location resolution
 - `src/AssetMemory.Data` — SQLite store and event application
 - `src/AssetMemory.Collector` — log tailing and the collector background service
-- `src/AssetMemory.UI` — Blazor Server UI
 - `tests/` — matching test project per `src/` project, using real captured log fixtures
 
 ## Tests
@@ -56,35 +56,12 @@ Build the distributable from the repo root:
 ./publish.ps1
 ```
 
-This produces `dist/AssetMemory-win-x64.zip` (~56 MB). To share it: send that zip; the recipient unzips it anywhere and runs `AssetMemory.exe` — its data (`settings.json`, `assetmemory.db`) lives in `%LOCALAPPDATA%\AssetMemory`, not next to the exe, so redeploying or moving the install never touches it.
+This produces `dist/AssetMemory-win-x64.zip` (~56 MB). To share it: send that zip; the recipient unzips it and runs `AssetMemory.exe` — that's the whole install, nothing else needed alongside it. Its data (`settings.json`, `assetmemory.db`) lives in `%LOCALAPPDATA%\AssetMemory`, not next to the exe, so redeploying or moving the install never touches it.
 
 Notes:
 - `./publish.ps1 -NoZip` produces just the publish folder without archiving.
-- The whole unzipped folder is required, not only the exe — `wwwroot/` and the static-asset manifest sit alongside it.
+- It's a genuine single-file exe — every static asset (CSS, the vendored `blazor.web.js`, the app icon) is embedded in the assembly, not shipped as loose files next to it.
 - The exe is unsigned, so Windows SmartScreen may warn on first run ("More info" → "Run anyway"). Code-signing is a future step.
-- Drop an `app.ico` next to the exe to replace the default tray icon — it's picked up automatically.
-
-## Console (TUI) edition
-
-`src/AssetMemory.Tui` is an alternative, **terminal** front-end (Terminal.Gui) over the same
-Core/Data/Collector layer — a live, filterable, sortable, paged inventory table with no browser and
-no web stack. Because it has no `wwwroot`, the published build is a genuine **single-file** exe.
-
-```
-dotnet run --project src/AssetMemory.Tui
-./publish.ps1 -TuiOnly            # -> dist/AssetMemory-Tui-win-x64.zip (single AssetMemory.Tui.exe)
-```
-
-`./publish.ps1` with no switches builds **both** editions; `-WebOnly` / `-TuiOnly` pick one.
-
-It picks its mode automatically via the shared single-instance lock:
-- **Standalone** (no other AssetMemory running) — it hosts the collector itself and owns its data.
-- **Viewer** (a background AssetMemory is already running) — it opens that instance's database
-  read-only for live viewing and delegates writes (sync / start-fresh / change-folder) to the running
-  host over a local **named pipe** (`AssetMemory.Control`). The pipe is served by *whichever* process
-  owns the collector — the Blazor/tray host **or** another standalone TUI — so viewers attach to either.
-
-Best experience in Windows Terminal (mouse + 24-bit color); works in legacy conhost too.
 
 ## Attribution
 
