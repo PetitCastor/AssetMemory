@@ -109,6 +109,11 @@
             </button>
         </div>
 
+        <div class="breadcrumb">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+            <span>@Breadcrumb</span>
+        </div>
+
         <div class="table-area">
         @if (!Collector.HasCompletedFirstTick)
         {
@@ -182,6 +187,7 @@
             </div>
             <span>@_pageResult.TotalUnits units total</span>
         </footer>
+        <div class="credit-line">Item data: <a href="https://star-citizen.wiki" target="_blank" rel="noopener">api.star-citizen.wiki</a></div>
         </div>
 
         <div class="status-bar">
@@ -329,6 +335,26 @@
 
     private string ChannelName =>
         Path.GetFileName(Path.GetDirectoryName(Settings.GameLogPath ?? "") ?? "");
+
+    // "All locations" / "{Place}" / "{Place} › {Container}" — mirrors the rollup rules in
+    // Store.GetHoldingDetailsPage (neither selected = everything, place only = place + child boxes).
+    private string Breadcrumb
+    {
+        get
+        {
+            if (string.IsNullOrEmpty(SelectedPlace))
+                return "All locations";
+
+            var placeLabel = Places.FirstOrDefault(p => p.Id.ToString() == SelectedPlace)?.Label
+                ?? $"Location {SelectedPlace}";
+            if (string.IsNullOrEmpty(SelectedContainer))
+                return placeLabel;
+
+            var containerLabel = Containers.FirstOrDefault(c => c.Id.ToString() == SelectedContainer)?.Label
+                ?? $"Container {SelectedContainer}";
+            return $"{placeLabel} › {containerLabel}";
+        }
+    }
 
     protected override void OnInitialized()
     {

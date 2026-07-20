@@ -97,6 +97,18 @@ body {
     position: relative;
 }
 
+.breadcrumb {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-top: none;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
 .icon {
     width: 16px;
     height: 16px;
@@ -267,6 +279,17 @@ tbody tr:hover {
     background: var(--bg);
     border: 1px solid var(--border);
     border-radius: 0 0 var(--radius) var(--radius);
+}
+
+.credit-line {
+    text-align: center;
+    padding: 0.4rem 0;
+    font-size: 0.7rem;
+    color: var(--text-hint);
+}
+
+.credit-line a {
+    color: inherit;
 }
 
 .pager {

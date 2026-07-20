@@ -16,7 +16,9 @@
 #                                instance and delegates writes to it. -> dist/AssetMemory-Tui-win-x64.zip
 #
 # Both are self-contained (no .NET runtime needed on the target). App data (settings.json,
-# assetmemory.db) is written next to the exe, so keep it somewhere writable (not Program Files).
+# assetmemory.db) lives in %LOCALAPPDATA%\AssetMemory, not next to the exe — so it survives
+# redeploys and never ends up inside dist/*.zip. AppPaths.EnsureReady() migrates a legacy
+# next-to-exe install on first run of a build that has the new path.
 
 param(
     [switch]$NoZip,
