@@ -45,6 +45,7 @@ public sealed class InventoryWindow : Window
     private readonly Button _prevBtn;
     private readonly Button _nextBtn;
     private readonly Label _watchingLabel;
+    private readonly Label _breadcrumbLabel;
 
     public InventoryWindow(AssetMemoryStore store, IActions actions)
     {
@@ -68,6 +69,9 @@ public sealed class InventoryWindow : Window
         _locSortBtn = new Button { X = Pos.Right(_itemSortBtn) + 1, Y = 1, Text = "Location" };
         _qtySortBtn = new Button { X = Pos.Right(_locSortBtn) + 1, Y = 1, Text = "Qty" };
         _seenSortBtn = new Button { X = Pos.Right(_qtySortBtn) + 1, Y = 1, Text = "Last seen" };
+
+        // --- Row 2: breadcrumb (mirrors Home.razor's "Place › Container" line) ---
+        _breadcrumbLabel = new Label { X = 1, Y = 2, Width = Dim.Fill(1), Text = "All locations" };
 
         // --- Table ---
         _table = new TableView
@@ -149,6 +153,7 @@ public sealed class InventoryWindow : Window
 
         Add(searchLabel, _searchField, _locBtn, _containerBtn, _pageSizeBtn, refreshBtn,
             sortLabel, _itemSortBtn, _locSortBtn, _qtySortBtn, _seenSortBtn,
+            _breadcrumbLabel,
             _table,
             _statusLabel, _prevBtn, _pageLabel, _nextBtn, syncBtn, freshBtn, pathBtn, inceptionBtn, _watchingLabel);
 
@@ -297,10 +302,16 @@ public sealed class InventoryWindow : Window
             : _containers.FirstOrDefault(c => c.Id == _selectedContainerId)?.Label ?? $"#{_selectedContainerId}";
         _containerBtn.Text = $"Container: {containerName}";
 
+        _breadcrumbLabel.Text = _selectedPlaceId is null
+            ? "All locations"
+            : _selectedContainerId is null
+                ? placeName
+                : $"{placeName} › {containerName}";
+
         var mode = _actions.IsViewer ? "viewer" : "standalone";
         var syncing = _actions.IsInitialSyncing ? "  (initial sync…)" : "";
         var from = _actions.InceptionUtc is { } inc ? $"  |  from {inc:yyyy-MM-dd}" : "";
-        _watchingLabel.Text = $"[{mode}] Watching: {_actions.GameLogPath ?? "(not set)"}{syncing}{from}";
+        _watchingLabel.Text = $"[{mode}] Watching: {_actions.GameLogPath ?? "(not set)"}{syncing}{from}  |  item data: api.star-citizen.wiki";
     }
 
     private static EnumerableTableSource<HoldingDetail> BuildSource(IReadOnlyList<HoldingDetail> rows) =>

@@ -62,6 +62,14 @@ public sealed class AppHost : IDisposable
         builder.Services.AddSingleton<IItemNameResolver>(_ =>
             new ItemNameResolver(GameItemNames.LoadForGameLog(settings.GameLogPath)));
         builder.Services.AddSingleton<IStationNameResolver, StationNameResolver>();
+        // Backfills names global.ini has no key for, via api.star-citizen.wiki's exact class_name
+        // search. One-shot per launch, runs in the background — never blocks startup.
+        builder.Services.AddSingleton(_ => new ExternalItemNameClient());
+        builder.Services.AddHostedService(sp => new ExternalItemNameBackfillService(
+            sp.GetRequiredService<AssetMemoryStore>(),
+            sp.GetRequiredService<IItemNameResolver>(),
+            sp.GetRequiredService<ExternalItemNameClient>(),
+            sp.GetRequiredService<ILogger<ExternalItemNameBackfillService>>()));
         builder.Services.AddSingleton(sp => new EventApplier(
             sp.GetRequiredService<AssetMemoryStore>(),
             sp.GetRequiredService<IItemNameResolver>(),

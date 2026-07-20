@@ -4,6 +4,9 @@ namespace AssetMemory.Core.Resolution;
 public interface IItemNameResolver
 {
     string Resolve(string? itemClass);
+
+    /// <summary>True if <paramref name="itemClass"/> has a curated override (e.g. from global.ini).</summary>
+    bool HasOverride(string itemClass);
 }
 
 /// <summary>Pure transform that produces a fallback display name from an unknown <c>ItemClass</c>.</summary>
