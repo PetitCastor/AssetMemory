@@ -1,0 +1,561 @@
+@page "/"
+@rendermode InteractiveServer
+@implements IDisposable
+@using AssetMemory.Collector
+@using AssetMemory.Collector.Control
+@using AssetMemory.Data
+@using AssetMemory.Core.Detection
+@inject AssetMemoryStore Store
+@inject AppSettings Settings
+@inject LogTailer Tailer
+@inject SyncService SyncSvc
+@inject GameLogCollector Collector
+@inject ControlService Control
+
+<PageTitle>Asset Memory - We remember for you</PageTitle>
+
+<div class="inventory-container">
+    <header class="inventory-header">
+        <div>
+            <h1>Asset Memory - We remember for you</h1>
+            <span class="subtitle">Star Citizen inventory tracker</span>
+        </div>
+    </header>
+
+    @if (string.IsNullOrEmpty(Settings.GameLogPath))
+    {
+        <div class="setup-card">
+            <h2>Welcome</h2>
+            <p>AssetMemory needs to know where Star Citizen is installed to start tracking your inventory.</p>
+
+            <button class="btn-primary" @onclick="AutoDetect">Auto-detect</button>
+
+            <div class="setup-divider"><span>or enter the path manually</span></div>
+
+            <div class="setup-input-row">
+                <input type="text" @bind="PathInput" placeholder="E:\Games\StarCitizen" class="setup-input" />
+                <button class="btn-primary" @onclick="ApplyPath">Set</button>
+            </div>
+
+            <p class="setup-hint">Point to your StarCitizen folder (containing LIVE, PTU, or EPTU).</p>
+
+            <label class="setup-checkbox">
+                <input type="checkbox" @bind="_startFresh" />
+                <span>Start fresh (skip historical log, track forward only)</span>
+            </label>
+
+            @if (_pathError is not null)
+            {
+                <p class="setup-error">@_pathError</p>
+            }
+        </div>
+    }
+    else
+    {
+        <div class="toolbar">
+            <div class="filter-group">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                <select @bind="SelectedSystem">
+                    <option value="">All systems</option>
+                    @foreach (var s in Systems)
+                    {
+                        <option value="@s">@s</option>
+                    }
+                </select>
+            </div>
+            <div class="filter-group">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                <select @bind="SelectedPlace">
+                    <option value="">All locations</option>
+                    @foreach (var p in Places)
+                    {
+                        <option value="@p.Id">@(p.Label ?? $"Location {p.Id}")</option>
+                    }
+                </select>
+            </div>
+            @if (Containers.Count > 0)
+            {
+                <div class="filter-group">
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+                    <select @bind="SelectedContainer">
+                        <option value="">(local storage)</option>
+                        @foreach (var c in Containers)
+                        {
+                            <option value="@c.Id">@(c.Label ?? $"Container {c.Id}")</option>
+                        }
+                    </select>
+                </div>
+            }
+            <div class="filter-group search">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                <input type="text" placeholder="Search items..." @bind="SearchTerm" @bind:event="oninput" />
+                @if (!string.IsNullOrEmpty(SearchTerm))
+                {
+                    <button class="clear-btn" @onclick="() => SearchTerm = string.Empty" title="Clear">&times;</button>
+                }
+            </div>
+            <div class="filter-group">
+                <span class="page-size-label">Per page</span>
+                <select @bind="PageSize">
+                    @foreach (var size in PageSizeOptions)
+                    {
+                        <option value="@size">@size</option>
+                    }
+                </select>
+            </div>
+            <button class="refresh-btn" @onclick="LoadData" title="Refresh">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+            </button>
+        </div>
+
+        <div class="breadcrumb">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+            <span>@Breadcrumb</span>
+        </div>
+
+        <div class="table-area">
+        @if (!Collector.HasCompletedFirstTick)
+        {
+            <div class="sync-overlay">
+                <div class="sync-overlay-content">
+                    <svg class="spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                    <span>Syncing inventory from Game.log&hellip;</span>
+                </div>
+            </div>
+        }
+        <div class="table-wrapper">
+            <table>
+                <thead>
+                    <tr>
+                        <th class="sortable" @onclick='() => ToggleSort("item")'>
+                            Item
+                            @if (SortColumn == "item") { <span class="sort-arrow">@(SortAsc ? "▲" : "▼")</span> }
+                        </th>
+                        <th class="sortable" @onclick='() => ToggleSort("location")'>
+                            Location
+                            @if (SortColumn == "location") { <span class="sort-arrow">@(SortAsc ? "▲" : "▼")</span> }
+                        </th>
+                        <th>Local Storage</th>
+                        <th class="sortable num" @onclick='() => ToggleSort("qty")'>
+                            Qty
+                            @if (SortColumn == "qty") { <span class="sort-arrow">@(SortAsc ? "▲" : "▼")</span> }
+                        </th>
+                        <th class="sortable num" @onclick='() => ToggleSort("seen")'>
+                            Last seen
+                            @if (SortColumn == "seen") { <span class="sort-arrow">@(SortAsc ? "▲" : "▼")</span> }
+                        </th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (_pageResult.Rows.Count == 0)
+                    {
+                        <tr>
+                            <td colspan="5" class="empty-state">
+                                @if (_pageResult.TotalCount == 0)
+                                {
+                                    <span>No inventory data yet. Play Star Citizen and open your inventory to start collecting.</span>
+                                }
+                                else
+                                {
+                                    <span>No items match your filters.</span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                    else
+                    {
+                        @foreach (var row in _pageResult.Rows)
+                        {
+                            <tr>
+                                <td>@(row.ItemDisplayName ?? row.ItemClassName)</td>
+                                <td class="@((row.LocationParentLabel ?? row.LocationLabel) is null ? "location-id" : "")">@(row.LocationParentLabel ?? row.LocationLabel ?? $"Location {row.LocationId}")</td>
+                                <td class="muted">@(row.LocationParentLabel is not null ? row.LocationLabel : null)</td>
+                                <td class="num">@row.Quantity</td>
+                                <td class="num muted">@FormatTimeAgo(row.LastSeenUtc)</td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <footer class="table-footer">
+            <span>@_pageResult.TotalCount rows across @_pageResult.DistinctLocations locations</span>
+            <div class="pager">
+                <button class="btn-secondary btn-sm" disabled="@(_page <= 1)" @onclick="() => GoToPage(_page - 1)">&lsaquo; Prev</button>
+                <span>Page @_page of @TotalPages</span>
+                <button class="btn-secondary btn-sm" disabled="@(_page >= TotalPages)" @onclick="() => GoToPage(_page + 1)">Next &rsaquo;</button>
+            </div>
+            <span>@_pageResult.TotalUnits units total</span>
+        </footer>
+        <div class="credit-line">Item data: <a href="https://star-citizen.wiki" target="_blank" rel="noopener">api.star-citizen.wiki</a></div>
+        </div>
+
+        <div class="status-bar">
+            @if (_editingPath)
+            {
+                <div class="path-editor">
+                    <input type="text" @bind="PathInput" placeholder="E:\Games\StarCitizen" class="setup-input" />
+                    <button class="btn-primary btn-sm" @onclick="ApplyPath">Save</button>
+                    <button class="btn-secondary btn-sm" @onclick="() => { _editingPath = false; _pathError = null; }">Cancel</button>
+                    @if (_pathError is not null)
+                    {
+                        <span class="setup-error">@_pathError</span>
+                    }
+                </div>
+            }
+            else
+            {
+                <div class="status-left">
+                    <span class="status-dot active"></span>
+                    <span>Watching @ChannelName</span>
+                    <span class="status-path" title="@Settings.GameLogPath">@Settings.GameLogPath</span>
+                    <button class="edit-path-btn" @onclick="StartEditPath" title="Change game folder">
+                        <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                    </button>
+                </div>
+                <div class="status-actions">
+                    <button class="sync-btn" @onclick="RunSync" disabled="@_syncing">
+                        @if (_syncing)
+                        {
+                            <svg class="icon spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                            <span>Syncing...</span>
+                        }
+                        else
+                        {
+                            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><polyline points="23 20 23 14 17 14"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>
+                            <span>Sync backups</span>
+                        }
+                    </button>
+                    @if (_confirmingClear)
+                    {
+                        <span class="clear-confirm">
+                            <span>Erase all tracked data and track forward only?</span>
+                            <button class="btn-danger btn-sm" @onclick="ConfirmClear">Yes, start fresh</button>
+                            <button class="btn-secondary btn-sm" @onclick="() => _confirmingClear = false">Cancel</button>
+                        </span>
+                    }
+                    else
+                    {
+                        <button class="sync-btn" @onclick="() => _confirmingClear = true" title="Clear all tracked inventory and start fresh">
+                            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                            <span>Start fresh</span>
+                        </button>
+                    }
+                </div>
+            }
+        </div>
+
+        @if (_syncMessage is not null)
+        {
+            <div class="sync-result">@_syncMessage</div>
+        }
+
+        <div class="inception-bar">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            <span class="inception-label">Track from</span>
+            <input type="date" @bind="InceptionDate" class="inception-input" disabled="@_settingInception" />
+            <button class="btn-secondary btn-sm" @onclick="ApplyInception" disabled="@_settingInception">Apply</button>
+            @if (Settings.SyncInceptionUtc is not null)
+            {
+                <button class="btn-secondary btn-sm" @onclick="ClearInception" disabled="@_settingInception">Ingest all</button>
+            }
+            <span class="inception-current">
+                @if (Settings.SyncInceptionUtc is { } incep)
+                {
+                    <text>currently tracking from @incep.ToString("yyyy-MM-dd") (UTC)</text>
+                }
+                else
+                {
+                    <text>currently ingesting all history</text>
+                }
+            </span>
+            @if (_settingInception)
+            {
+                <span class="inception-busy">
+                    <svg class="icon spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                    Rebuilding&hellip;
+                </span>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    private static readonly int[] PageSizeOptions = [10, 25, 50, 100];
+
+    private HoldingDetailsPage _pageResult = new([], 0, 0, 0);
+    private List<string> Systems = [];
+    private List<LocationRow> Places = [];
+    private List<LocationRow> Containers = [];
+
+    private string _searchTerm = "";
+    private string SearchTerm
+    {
+        get => _searchTerm;
+        set { _searchTerm = value; _page = 1; LoadData(); }
+    }
+
+    // The top dropdown picks a system (Stanton / Nyx / Pyro / Other — jump points fold into their
+    // origin system, not a bucket of their own); the second picks
+    // a place (station / local storage) within it, narrowing the place list; when that place has
+    // stocked containers a third dropdown appears to drill into one. Changing a broader selection
+    // clears the narrower ones since they no longer apply.
+    private string _selectedSystem = "";
+    private string SelectedSystem
+    {
+        get => _selectedSystem;
+        set { _selectedSystem = value; _selectedPlace = ""; _selectedContainer = ""; _page = 1; LoadData(); }
+    }
+
+    private string _selectedPlace = "";
+    private string SelectedPlace
+    {
+        get => _selectedPlace;
+        set { _selectedPlace = value; _selectedContainer = ""; _page = 1; LoadData(); }
+    }
+
+    private string _selectedContainer = "";
+    private string SelectedContainer
+    {
+        get => _selectedContainer;
+        set { _selectedContainer = value; _page = 1; LoadData(); }
+    }
+
+    private string SortColumn { get; set; } = "item";
+    private bool SortAsc { get; set; } = true;
+    private int _page = 1;
+    private int _pageSize = 25;
+    private int PageSize
+    {
+        get => _pageSize;
+        set { _pageSize = value; _page = 1; LoadData(); }
+    }
+    private int TotalPages => Math.Max(1, (int)Math.Ceiling((double)_pageResult.TotalCount / _pageSize));
+    private string? _syncMessage;
+    private string PathInput { get; set; } = "";
+    private string? _pathError;
+    private bool _editingPath;
+    private bool _startFresh;
+    private bool _confirmingClear;
+    private bool _syncing;
+    private bool _settingInception;
+    private DateOnly? InceptionDate { get; set; }
+    private System.Threading.Timer? _refreshTimer;
+
+    private string ChannelName =>
+        Path.GetFileName(Path.GetDirectoryName(Settings.GameLogPath ?? "") ?? "");
+
+    // "All locations" / "{System}" / "{System} › {Place}" / "{System} › {Place} › {Container}" —
+    // mirrors the rollup rules in Store.GetHoldingDetailsPage (nothing selected = everything,
+    // system only = every place + box tagged with it, place only = place + child boxes).
+    private string Breadcrumb
+    {
+        get
+        {
+            if (string.IsNullOrEmpty(SelectedSystem))
+                return "All locations";
+
+            if (string.IsNullOrEmpty(SelectedPlace))
+                return SelectedSystem;
+
+            var placeLabel = Places.FirstOrDefault(p => p.Id.ToString() == SelectedPlace)?.Label
+                ?? $"Location {SelectedPlace}";
+            if (string.IsNullOrEmpty(SelectedContainer))
+                return $"{SelectedSystem} › {placeLabel}";
+
+            var containerLabel = Containers.FirstOrDefault(c => c.Id.ToString() == SelectedContainer)?.Label
+                ?? $"Container {SelectedContainer}";
+            return $"{SelectedSystem} › {placeLabel} › {containerLabel}";
+        }
+    }
+
+    protected override void OnInitialized()
+    {
+        SyncInceptionInput();
+        if (!string.IsNullOrEmpty(Settings.GameLogPath))
+            LoadData();
+
+        // The collector ticks in the background regardless of this page; poll so newly captured
+        // inventory shows up without the user having to hit the manual refresh/sync buttons.
+        _refreshTimer = new System.Threading.Timer(_ => InvokeAsync(() =>
+        {
+            LoadData();
+            StateHasChanged();
+        }), null, TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(3));
+    }
+
+    public void Dispose() => _refreshTimer?.Dispose();
+
+    private void AutoDetect()
+    {
+        var found = GamePathFinder.FindGameLogPaths();
+        if (found.Count > 0)
+        {
+            SetGameLogPath(found[0]);
+            _pathError = null;
+        }
+        else
+        {
+            _pathError = "Could not find Game.log. Enter the path manually.";
+        }
+    }
+
+    private void ApplyPath()
+    {
+        if (string.IsNullOrWhiteSpace(PathInput))
+        {
+            _pathError = "Please enter a path.";
+            return;
+        }
+
+        var resolved = GamePathFinder.FindGameLogInFolder(PathInput.Trim());
+        if (resolved is null && GamePathFinder.IsValidGameLog(PathInput.Trim()))
+            resolved = Path.GetFullPath(PathInput.Trim());
+
+        if (resolved is null)
+        {
+            _pathError = "Game.log not found at that location. Check the path and try again.";
+            return;
+        }
+
+        SetGameLogPath(resolved);
+        _pathError = null;
+        _editingPath = false;
+    }
+
+    private void SetGameLogPath(string path)
+    {
+        Settings.GameLogPath = path;
+        Settings.Save(AppPaths.SettingsPath);
+        Tailer.SetPath(path);
+        if (_startFresh)
+            Tailer.SeekToEnd();
+        LoadData();
+    }
+
+    private void StartEditPath()
+    {
+        var current = Settings.GameLogPath ?? "";
+        PathInput = Path.GetDirectoryName(Path.GetDirectoryName(current) ?? "") ?? current;
+        _editingPath = true;
+        _pathError = null;
+    }
+
+    private async Task RunSync()
+    {
+        _syncing = true;
+        _syncMessage = null;
+        try
+        {
+            var result = await Task.Run(() => SyncSvc.Sync());
+            _syncMessage = result.Message;
+            _page = 1;
+            LoadData();
+        }
+        finally
+        {
+            _syncing = false;
+        }
+    }
+
+    // Seeds the date input from the persisted inception so the picker reflects the active bound.
+    private void SyncInceptionInput()
+        => InceptionDate = Settings.SyncInceptionUtc is { } d ? DateOnly.FromDateTime(d.UtcDateTime) : null;
+
+    private async Task ApplyInception()
+    {
+        if (InceptionDate is not { } date)
+        {
+            _syncMessage = "Pick a date to set a tracking start, or use \"Ingest all\".";
+            return;
+        }
+        // The chosen calendar date at 00:00 UTC, an inclusive lower bound (events on/after it are kept).
+        await RunSetInception(new DateTimeOffset(date.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero));
+    }
+
+    private async Task ClearInception()
+    {
+        InceptionDate = null;
+        await RunSetInception(null);
+    }
+
+    // Setting the inception rebuilds the DB from the log under the new bound (may take a moment on a
+    // large log), so run it off the UI thread and show a busy state — mirrors RunSync.
+    private async Task RunSetInception(DateTimeOffset? date)
+    {
+        _settingInception = true;
+        _syncMessage = null;
+        try
+        {
+            await Task.Run(() => Control.SetInception(date));
+            SyncInceptionInput();
+            _page = 1;
+            LoadData();
+            _syncMessage = date is { } d
+                ? $"Now tracking from {d:yyyy-MM-dd} (UTC)."
+                : "Now ingesting all history.";
+        }
+        finally
+        {
+            _settingInception = false;
+        }
+    }
+
+    private void ConfirmClear()
+    {
+        Collector.StartFresh(() => Store.ClearAll());
+        Settings.ProcessedBackups.Clear();
+        Settings.Save(AppPaths.SettingsPath);
+        _confirmingClear = false;
+        _syncMessage = null;
+        _page = 1;
+        LoadData();
+    }
+
+    private void LoadData()
+    {
+        var system = string.IsNullOrEmpty(SelectedSystem) ? null : SelectedSystem;
+        long? placeId = long.TryParse(SelectedPlace, out var pid) ? pid : null;
+        long? containerId = long.TryParse(SelectedContainer, out var cid) ? cid : null;
+        var term = string.IsNullOrWhiteSpace(SearchTerm) ? null : SearchTerm.Trim();
+
+        // A system rolls up every place (and its boxes) tagged with it; a place further rolls up its
+        // containers' contents; a chosen container narrows to just that box.
+        _pageResult = Store.GetHoldingDetailsPage(placeId, containerId, term, SortColumn, SortAsc, _page, _pageSize, system);
+        Systems = Store.GetSystemsWithHoldings().ToList();
+        Places = Store.GetPlacesWithHoldings(system).ToList();
+        Containers = placeId is not null
+            ? Store.GetContainersForPlace(placeId.Value).ToList()
+            : [];
+    }
+
+    private void GoToPage(int page)
+    {
+        _page = Math.Clamp(page, 1, TotalPages);
+        LoadData();
+    }
+
+    private void ToggleSort(string column)
+    {
+        if (SortColumn == column)
+            SortAsc = !SortAsc;
+        else
+        {
+            SortColumn = column;
+            SortAsc = true;
+        }
+        _page = 1;
+        LoadData();
+    }
+
+    private static string FormatTimeAgo(DateTimeOffset utc)
+    {
+        var diff = DateTimeOffset.UtcNow - utc;
+        if (diff.TotalMinutes < 1) return "just now";
+        if (diff.TotalMinutes < 60) return $"{(int)diff.TotalMinutes}m ago";
+        if (diff.TotalHours < 24) return $"{(int)diff.TotalHours}h ago";
+        if (diff.TotalDays < 30) return $"{(int)diff.TotalDays}d ago";
+        return utc.ToString("yyyy-MM-dd");
+    }
+}
