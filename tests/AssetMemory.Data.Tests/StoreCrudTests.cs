@@ -101,4 +101,39 @@ public class StoreCrudTests
             Assert.Equal("New", store.GetItem("foo")!.DisplayName);
         }
     }
+
+    // ---------- external item name cache ----------
+
+    [Fact]
+    public void EnsureItem_prefers_a_cached_external_name_over_the_freshly_computed_one_on_first_insert()
+    {
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            store.UpsertExternalItemName("grin_multitool_01", "Cambio-Lite SRT Canister");
+
+            store.EnsureItem("grin_multitool_01", "Grin multitool 01 salvage repair"); // heuristic guess
+
+            Assert.Equal("Cambio-Lite SRT Canister", store.GetItem("grin_multitool_01")!.DisplayName);
+        }
+    }
+
+    [Fact]
+    public void EnsureItem_reapplies_the_cached_external_name_after_a_rebuild_wipes_the_item_row()
+    {
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            store.EnsureItem("grin_multitool_01", "Grin multitool 01 salvage repair");
+            store.UpsertExternalItemName("grin_multitool_01", "Cambio-Lite SRT Canister");
+            store.EnsureItem("grin_multitool_01", "Cambio-Lite SRT Canister"); // as the backfill service would
+
+            // Start fresh / a sync-inception date change wipes and rebuilds items from the log —
+            // the rebuild only knows the heuristic guess, same as the very first ingest.
+            store.ClearAll();
+            store.EnsureItem("grin_multitool_01", "Grin multitool 01 salvage repair");
+
+            Assert.Equal("Cambio-Lite SRT Canister", store.GetItem("grin_multitool_01")!.DisplayName);
+        }
+    }
 }

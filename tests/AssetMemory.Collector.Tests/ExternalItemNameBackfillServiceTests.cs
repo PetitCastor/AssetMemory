@@ -107,6 +107,31 @@ public class ExternalItemNameBackfillServiceTests
     }
 
     [Fact]
+    public async Task Resolved_names_are_cached_durably_and_survive_a_ClearAll_rebuild()
+    {
+        var (store, conn) = NewStore();
+        using (conn)
+        {
+            const string className = "grin_multitool_resource_salvage_repair_01_filled";
+            store.EnsureItem(className, "Grin multitool resource salvage repair 01 filled");
+            var resolver = new FakeItemNameResolver();
+            var handler = new CountingHandler(cn => cn == className ? "Cambio-Lite SRT Canister" : null);
+            using var client = new ExternalItemNameClient(handler);
+            var service = new ExternalItemNameBackfillService(
+                store, resolver, client, NullLogger<ExternalItemNameBackfillService>.Instance);
+
+            await RunToCompletionAsync(service);
+
+            // Simulates "Start fresh" / a sync-inception date change: items gets wiped and rebuilt
+            // from the log, which only knows the heuristic name -- the cached external name must win.
+            store.ClearAll();
+            store.EnsureItem(className, "Grin multitool resource salvage repair 01 filled");
+
+            Assert.Equal("Cambio-Lite SRT Canister", store.GetItem(className)!.DisplayName);
+        }
+    }
+
+    [Fact]
     public async Task Items_the_client_cannot_resolve_keep_their_existing_heuristic_name()
     {
         var (store, conn) = NewStore();

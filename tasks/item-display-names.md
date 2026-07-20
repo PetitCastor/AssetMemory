@@ -57,6 +57,20 @@ resolve, using star-citizen.wiki's exact `class_name` search:
 - Attribution added: "Item data: api.star-citizen.wiki" credit line in `Home.razor` (web footer) and
   `InventoryWindow.cs` (TUI status line).
 
+## Follow-up fix (2026-07-20): backfilled names reverted on rebuild
+
+Found live: a resolved name (e.g. Cambio-Lite SRT Canister) would revert to the heuristic guess
+whenever the sync-inception date was changed, or "Start fresh" was used. Both rebuild `items` from
+scratch via `AssetMemoryStore.ClearAll()` + a log replay that only knows global.ini + the heuristic
+formatter — the external API is only ever queried at app startup, so a mid-session rebuild had no way
+to re-derive the name and the old (wrong) heuristic name won.
+
+Fixed with a durable `external_item_names` cache table, deliberately excluded from `ClearAll()`:
+`ExternalItemNameBackfillService` writes a resolved name there (in addition to `items.display_name`),
+and `AssetMemoryStore.EnsureItem` now always prefers a cached name over the freshly computed one — so
+any rebuild that re-inserts the item (Start fresh, sync-inception change, or a plain restart) picks the
+correct name back up instantly, without hitting the rate-limited API again.
+
 ## Acceptance
 
 - [x] Root cause documented (ini key ≠ log's ItemClass token, not a parser bug).
