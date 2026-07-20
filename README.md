@@ -8,7 +8,7 @@ A local inventory tracker for Star Citizen. It watches your `Game.log` in the ba
 
 ## What it offers
 
-- A searchable, sortable, paginated inventory table served locally at `http://localhost:9222`.
+- A searchable, sortable, paginated inventory table served locally at `http://localhost:9222`. The search box supports SQL-style wildcards — `gun%` for "starts with", `%rifle` for "ends with", `_` for exactly one character — on top of the default "contains" match.
 - Filtering that cascades **System → Place → Container** (e.g. Nyx → Nyx Castra Jump Point → a Stor-All box), with a breadcrumb showing exactly what's in view.
 - Runs quietly in the **system tray** — no console window, no browser tab forced open. Right-click for Open/Exit; launching it twice just reopens the UI instead of starting a duplicate.
 - Ships as a single self-contained executable. No .NET runtime to install, no companion files to lose track of.

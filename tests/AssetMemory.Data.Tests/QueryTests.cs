@@ -189,6 +189,27 @@ public class QueryTests
     }
 
     [Fact]
+    public void GetHoldingDetailsPage_search_term_with_percent_wildcard_anchors_the_match()
+    {
+        var (store, conn) = SeededForPaging();
+        using (conn)
+        {
+            // Plain "y" is a substring match: "y" appears in Yankee, Whiskey, and Xray.
+            var plain = store.GetHoldingDetailsPage(null, null, "y", "location", true, 1, 10);
+            Assert.Equal(3, plain.TotalCount);
+
+            // "y%" anchors to "starts with" -- only Yankee starts with y.
+            var startsWith = store.GetHoldingDetailsPage(null, null, "y%", "location", true, 1, 10);
+            Assert.Equal("Yankee", Assert.Single(startsWith.Rows).ItemDisplayName);
+
+            // "%y" anchors to "ends with" -- Whiskey and Xray end in y, Yankee does not.
+            var endsWith = store.GetHoldingDetailsPage(null, null, "%y", "location", true, 1, 10);
+            Assert.Equal(2, endsWith.TotalCount);
+            Assert.DoesNotContain(endsWith.Rows, r => r.ItemDisplayName == "Yankee");
+        }
+    }
+
+    [Fact]
     public void GetHoldingDetailsPage_excludes_unlabelled_locations()
     {
         var (store, conn) = SeededForPaging();
@@ -292,6 +313,36 @@ public class QueryTests
             var results = store.SearchItems("bottle").ToList();
             Assert.Single(results);
             Assert.Equal("Synergy+ Bottle", results[0].DisplayName);
+        }
+    }
+
+    [Fact]
+    public void SearchItems_with_percent_wildcard_anchors_the_match()
+    {
+        var (store, conn) = SeededForPaging();
+        using (conn)
+        {
+            // "y%" anchors to "starts with" -- only Yankee, not Whiskey/Xray (which merely contain y).
+            Assert.Equal("Yankee", Assert.Single(store.SearchItems("y%")).DisplayName);
+
+            // "%y" anchors to "ends with" -- Whiskey and Xray, not Yankee.
+            var endsWith = store.SearchItems("%y").ToList();
+            Assert.Equal(2, endsWith.Count);
+            Assert.DoesNotContain(endsWith, i => i.DisplayName == "Yankee");
+        }
+    }
+
+    [Fact]
+    public void SearchItems_with_underscore_wildcard_matches_exactly_one_character()
+    {
+        var (store, conn) = Seeded();
+        using (conn)
+        {
+            // "_edpen" = exactly one char + "edpen" -- matches "MedPen" (case-insensitive).
+            Assert.Equal("MedPen", Assert.Single(store.SearchItems("_edpen")).DisplayName);
+
+            // Two wildcards would require a two-character prefix; "MedPen" only has one.
+            Assert.Empty(store.SearchItems("__edpen"));
         }
     }
 

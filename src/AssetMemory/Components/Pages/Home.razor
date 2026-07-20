@@ -88,7 +88,7 @@
             }
             <div class="filter-group search">
                 <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-                <input type="text" placeholder="Search items..." @bind="SearchTerm" @bind:event="oninput" />
+                <input type="text" placeholder="Search items..." title="Type % for any characters or _ for one, e.g. gun% for &quot;starts with&quot;" @bind="SearchTerm" @bind:event="oninput" />
                 @if (!string.IsNullOrEmpty(SearchTerm))
                 {
                     <button class="clear-btn" @onclick="() => SearchTerm = string.Empty" title="Clear">&times;</button>
