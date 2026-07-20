@@ -318,7 +318,8 @@ public sealed class InventoryWindow : Window
         new(rows, new Dictionary<string, Func<HoldingDetail, object>>
         {
             { "Item", h => h.ItemDisplayName ?? h.ItemClassName },
-            { "Location", h => h.LocationLabel ?? $"Location {h.LocationId}" },
+            { "Location", h => h.LocationParentLabel ?? h.LocationLabel ?? $"Location {h.LocationId}" },
+            { "Local Storage", h => h.LocationParentLabel is not null ? h.LocationLabel ?? "" : "" },
             { "Qty", h => h.Quantity },
             { "Last seen", h => FormatTimeAgo(h.LastSeenUtc) },
         });

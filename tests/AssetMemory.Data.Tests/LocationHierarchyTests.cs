@@ -111,6 +111,27 @@ public class LocationHierarchyTests
     }
 
     [Fact]
+    public void GetHoldingDetailsPage_leaves_LocationParentLabel_blank_for_place_direct_rows_and_set_for_container_rows()
+    {
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            Seed(store);
+            var rows = store.GetHoldingDetailsPage(null, null, null, "item", true, 1, 50).Rows;
+
+            // Place-direct row: Location already shows the place, so Local Storage stays blank
+            // (nothing to add) rather than repeating the same text.
+            var placeRow = Assert.Single(rows, r => r.LocationId == Place);
+            Assert.Null(placeRow.LocationParentLabel);
+
+            // Container row: Location shows the box's (possibly ambiguous, reused) label, so
+            // Local Storage carries the actual place it sits at.
+            var boxRow = Assert.Single(rows, r => r.LocationId == Box);
+            Assert.Equal("Nyx Castra Jump Point", boxRow.LocationParentLabel);
+        }
+    }
+
+    [Fact]
     public void ApplyMigration_upgrades_a_legacy_v1_locations_table_in_place()
     {
         using var conn = new SqliteConnection("Data Source=:memory:");

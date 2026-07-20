@@ -19,8 +19,9 @@ It cannot find your ship. It cannot find your sanity after a server crash ate yo
 ## How it works
 
 - A background collector tails `Game.log` (and can re-sync historical backup logs) for inventory move, equip, and container events — silently, in the background, judging none of your hoarding habits.
-- Events are stored in a local SQLite database as a discovery ledger — locations and quantities are derived purely from what the log reveals. No item left un-spreadsheeted.
-- Numeric location/player/entity IDs are auto-resolved into readable names (player handle, worn-item name, "New Babbage" instead of `3170699229`) using data already present in the log — no external API, no telemetry, no cloud. Your hoarding is for your eyes only.
+- Events are stored in a local SQLite database as a discovery ledger — locations and quantities are derived purely from what the log reveals. Containers (Stor-All boxes, etc.) nest under the station/place they sit at, so moving an item into a box doesn't make it disappear from view. No item left un-spreadsheeted.
+- Numeric location/player/entity IDs are auto-resolved into readable names (player handle, worn-item name, "New Babbage" instead of `3170699229`) using data already present in the log or your game's `global.ini` — no telemetry, no analytics, nothing sent anywhere by default. The one exception: item classes with no local name are looked up once against `api.star-citizen.wiki` (rate-limited, cached locally so it's never repeated) — see [Attribution](#attribution).
+- You can set a "track from" date to ignore everything before it, and rebuild your history on demand — both persist across restarts.
 - A Blazor Server UI serves a searchable, sortable inventory table at `http://localhost:9222`, complete with pagination, because apparently some of us own 300+ distinct items and a flat unpaginated list was a war crime.
 
 ## Running
@@ -55,7 +56,7 @@ Build the distributable from the repo root:
 ./publish.ps1
 ```
 
-This produces `dist/AssetMemory-win-x64.zip` (~56 MB). To share it: send that zip; the recipient unzips it anywhere **writable** (not `Program Files`, since the app writes `settings.json` and `assetmemory.db` next to the exe) and runs `AssetMemory.exe`.
+This produces `dist/AssetMemory-win-x64.zip` (~56 MB). To share it: send that zip; the recipient unzips it anywhere and runs `AssetMemory.exe` — its data (`settings.json`, `assetmemory.db`) lives in `%LOCALAPPDATA%\AssetMemory`, not next to the exe, so redeploying or moving the install never touches it.
 
 Notes:
 - `./publish.ps1 -NoZip` produces just the publish folder without archiving.
@@ -84,6 +85,10 @@ It picks its mode automatically via the shared single-instance lock:
   owns the collector — the Blazor/tray host **or** another standalone TUI — so viewers attach to either.
 
 Best experience in Windows Terminal (mouse + 24-bit color); works in legacy conhost too.
+
+## Attribution
+
+Item names not found in your game's `global.ini` are looked up against [api.star-citizen.wiki](https://star-citizen.wiki), credited here per its terms of use.
 
 ---
 

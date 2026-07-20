@@ -136,6 +136,7 @@
                             Location
                             @if (SortColumn == "location") { <span class="sort-arrow">@(SortAsc ? "▲" : "▼")</span> }
                         </th>
+                        <th>Local Storage</th>
                         <th class="sortable num" @onclick='() => ToggleSort("qty")'>
                             Qty
                             @if (SortColumn == "qty") { <span class="sort-arrow">@(SortAsc ? "▲" : "▼")</span> }
@@ -150,7 +151,7 @@
                     @if (_pageResult.Rows.Count == 0)
                     {
                         <tr>
-                            <td colspan="4" class="empty-state">
+                            <td colspan="5" class="empty-state">
                                 @if (_pageResult.TotalCount == 0)
                                 {
                                     <span>No inventory data yet. Play Star Citizen and open your inventory to start collecting.</span>
@@ -168,7 +169,8 @@
                         {
                             <tr>
                                 <td>@(row.ItemDisplayName ?? row.ItemClassName)</td>
-                                <td class="@(row.LocationLabel is null ? "location-id" : "")">@(row.LocationLabel ?? $"Location {row.LocationId}")</td>
+                                <td class="@((row.LocationParentLabel ?? row.LocationLabel) is null ? "location-id" : "")">@(row.LocationParentLabel ?? row.LocationLabel ?? $"Location {row.LocationId}")</td>
+                                <td class="muted">@(row.LocationParentLabel is not null ? row.LocationLabel : null)</td>
                                 <td class="num">@row.Quantity</td>
                                 <td class="num muted">@FormatTimeAgo(row.LastSeenUtc)</td>
                             </tr>

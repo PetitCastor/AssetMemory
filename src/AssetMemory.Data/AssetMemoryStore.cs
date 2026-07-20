@@ -394,12 +394,13 @@ public sealed class AssetMemoryStore
     {
         using var cmd = _conn.CreateCommand();
         cmd.CommandText = """
-            SELECT h.location_id, l.label,
+            SELECT h.location_id, l.label, p.label,
                    h.item_id, i.class_name, i.display_name,
                    h.quantity, h.first_seen_utc, h.last_seen_utc
             FROM holdings h
             JOIN items i ON i.id = h.item_id
             JOIN locations l ON l.id = h.location_id
+            LEFT JOIN locations p ON p.id = l.parent_id
             ORDER BY l.label, i.display_name, i.class_name;
             """;
         using var r = cmd.ExecuteReader();
@@ -408,12 +409,13 @@ public sealed class AssetMemoryStore
             list.Add(new HoldingDetail(
                 r.GetInt64(0),
                 r.IsDBNull(1) ? null : r.GetString(1),
-                r.GetInt64(2),
-                r.GetString(3),
-                r.IsDBNull(4) ? null : r.GetString(4),
-                r.GetInt32(5),
-                ParseUtc(r.GetString(6)),
-                ParseUtc(r.GetString(7))));
+                r.IsDBNull(2) ? null : r.GetString(2),
+                r.GetInt64(3),
+                r.GetString(4),
+                r.IsDBNull(5) ? null : r.GetString(5),
+                r.GetInt32(6),
+                ParseUtc(r.GetString(7)),
+                ParseUtc(r.GetString(8))));
         return list;
     }
 
@@ -440,6 +442,7 @@ public sealed class AssetMemoryStore
             FROM holdings h
             JOIN items i ON i.id = h.item_id
             JOIN locations l ON l.id = h.location_id
+            LEFT JOIN locations p ON p.id = l.parent_id
             WHERE l.label IS NOT NULL
               AND ($container IS NULL OR h.location_id = $container)
               AND ($container IS NOT NULL OR $place IS NULL
@@ -466,7 +469,7 @@ public sealed class AssetMemoryStore
 
         using var cmd = _conn.CreateCommand();
         cmd.CommandText = $"""
-            SELECT h.location_id, l.label,
+            SELECT h.location_id, l.label, p.label,
                    h.item_id, i.class_name, i.display_name,
                    h.quantity, h.first_seen_utc, h.last_seen_utc
             {filterSql}
@@ -484,12 +487,13 @@ public sealed class AssetMemoryStore
             rows.Add(new HoldingDetail(
                 r.GetInt64(0),
                 r.IsDBNull(1) ? null : r.GetString(1),
-                r.GetInt64(2),
-                r.GetString(3),
-                r.IsDBNull(4) ? null : r.GetString(4),
-                r.GetInt32(5),
-                ParseUtc(r.GetString(6)),
-                ParseUtc(r.GetString(7))));
+                r.IsDBNull(2) ? null : r.GetString(2),
+                r.GetInt64(3),
+                r.GetString(4),
+                r.IsDBNull(5) ? null : r.GetString(5),
+                r.GetInt32(6),
+                ParseUtc(r.GetString(7)),
+                ParseUtc(r.GetString(8))));
 
         return new HoldingDetailsPage(rows, totalCount, distinctLocations, totalUnits);
     }
