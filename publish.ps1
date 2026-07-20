@@ -1,117 +1,46 @@
-# Builds the self-contained, zero-install Windows distributables and zips them for sharing.
+# Builds the self-contained, zero-install Windows distributable and zips it for sharing.
 #
-#   ./publish.ps1                  -> all three editions into dist/
-#   ./publish.ps1 -WebOnly         -> just the Blazor tray/web edition
-#   ./publish.ps1 -TuiOnly         -> just the console (TUI) edition
-#   ./publish.ps1 -StandaloneOnly  -> just the single-exe web edition
-#   ./publish.ps1 -NoZip           -> publish folders only, no archives
+#   ./publish.ps1        -> dist/AssetMemory-win-x64.zip
+#   ./publish.ps1 -NoZip -> publish folder only, no archive
 #
-# Three editions over the same Core/Data/Collector layer:
+# AssetMemory.exe is a tray app + Blazor UI on http://localhost:9222. Self-contained (no .NET
+# runtime needed on the target) and a genuine single-file exe -- every static asset (CSS, the
+# vendored blazor.web.js, the app icon) is an embedded resource served by a custom IFileProvider
+# (see ManifestResourceFileProvider.cs / Program.cs) instead of living under wwwroot/, so the
+# publish folder is just the one exe.
 #
-#   Web (AssetMemory.exe)      - tray app + Blazor UI on http://localhost:9222. Self-contained but
-#                                a multi-file drop: the whole folder is required (wwwroot/ + the
-#                                static-asset manifest sit next to the exe). -> dist/AssetMemory-win-x64.zip
-#
-#   TUI (AssetMemory.Tui.exe)  - terminal UI, no browser, no wwwroot, so a genuine single-file exe.
-#                                Runs standalone, or attaches as a read-only viewer to a running web
-#                                instance and delegates writes to it. -> dist/AssetMemory-Tui-win-x64.zip
-#
-#   Standalone (AssetMemory.Standalone.exe) - same tray + Blazor UI as the Web edition, but every
-#                                static asset is embedded in the assembly (StaticWebAssetsEnabled=
-#                                false + a custom embedded-resource file provider, see Program.cs),
-#                                so the publish folder really is just the one exe.
-#                                -> dist/AssetMemory-Standalone-win-x64.zip
-#
-# All three are self-contained (no .NET runtime needed on the target). App data (settings.json,
-# assetmemory.db) lives in %LOCALAPPDATA%\AssetMemory, not next to the exe — so it survives
-# redeploys and never ends up inside dist/*.zip. AppPaths.EnsureReady() migrates a legacy
-# next-to-exe install on first run of a build that has the new path.
+# App data (settings.json, assetmemory.db) lives in %LOCALAPPDATA%\AssetMemory, not next to the
+# exe — so it survives redeploys and never ends up inside dist/AssetMemory-win-x64.zip.
+# AppPaths.EnsureReady() migrates a legacy next-to-exe install on first run of a build that has
+# the new path.
 
 param(
-    [switch]$NoZip,
-    [switch]$WebOnly,
-    [switch]$TuiOnly,
-    [switch]$StandaloneOnly
+    [switch]$NoZip
 )
 
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 $distDir = Join-Path $root 'dist'
+$project = Join-Path $root 'src\AssetMemory'
+$publishDir = Join-Path $project 'bin\Release\net10.0-windows\win-x64\publish'
 
-function Compress-Edition {
-    param([string]$PublishDir, [string]$ZipName)
+Write-Host "Publishing self-contained win-x64 build..." -ForegroundColor Cyan
+if (Test-Path $publishDir) { Remove-Item -Recurse -Force $publishDir }
+dotnet publish $project -c Release
+if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed (exit $LASTEXITCODE)" }
+
+$exe = Join-Path $publishDir 'AssetMemory.exe'
+if (-not (Test-Path $exe)) { throw "Expected exe not found at $exe" }
+
+$sizeMb = [math]::Round((Get-Item $exe).Length / 1MB, 1)
+Write-Host "Published: $publishDir  (AssetMemory.exe = $sizeMb MB)" -ForegroundColor Green
+
+if (-not $NoZip) {
     New-Item -ItemType Directory -Force -Path $distDir | Out-Null
-    $zip = Join-Path $distDir $ZipName
+    $zip = Join-Path $distDir 'AssetMemory-win-x64.zip'
     if (Test-Path $zip) { Remove-Item -Force $zip }
     Write-Host "Zipping to $zip ..." -ForegroundColor Cyan
-    Compress-Archive -Path (Join-Path $PublishDir '*') -DestinationPath $zip
+    Compress-Archive -Path (Join-Path $publishDir '*') -DestinationPath $zip
     $zipMb = [math]::Round((Get-Item $zip).Length / 1MB, 1)
     Write-Host "Done: $zip  ($zipMb MB)" -ForegroundColor Green
 }
-
-function Publish-Web {
-    $project = Join-Path $root 'src\AssetMemory.UI'
-    $publishDir = Join-Path $project 'bin\Release\net10.0-windows\win-x64\publish'
-
-    Write-Host "Publishing self-contained win-x64 WEB build..." -ForegroundColor Cyan
-    if (Test-Path $publishDir) { Remove-Item -Recurse -Force $publishDir }
-    dotnet publish $project -c Release
-    if ($LASTEXITCODE -ne 0) { throw "dotnet publish (web) failed (exit $LASTEXITCODE)" }
-
-    $exe = Join-Path $publishDir 'AssetMemory.exe'
-    if (-not (Test-Path $exe)) { throw "Expected exe not found at $exe" }
-
-    # PublishSingleFile + Sdk.Web drops loose Content items, so ship the tray icon explicitly.
-    $icon = Join-Path $project 'app.ico'
-    if (Test-Path $icon) { Copy-Item $icon $publishDir -Force }
-
-    $sizeMb = [math]::Round((Get-Item $exe).Length / 1MB, 1)
-    Write-Host "Published: $publishDir  (AssetMemory.exe = $sizeMb MB)" -ForegroundColor Green
-
-    if (-not $NoZip) { Compress-Edition -PublishDir $publishDir -ZipName 'AssetMemory-win-x64.zip' }
-}
-
-function Publish-Tui {
-    $project = Join-Path $root 'src\AssetMemory.Tui'
-    $publishDir = Join-Path $project 'bin\Release\net10.0\win-x64\publish'
-
-    Write-Host "Publishing self-contained win-x64 TUI build..." -ForegroundColor Cyan
-    if (Test-Path $publishDir) { Remove-Item -Recurse -Force $publishDir }
-    dotnet publish $project -c Release -r win-x64 --self-contained `
-        -p:PublishSingleFile=true `
-        -p:IncludeNativeLibrariesForSelfExtract=true `
-        -p:DebugType=embedded
-    if ($LASTEXITCODE -ne 0) { throw "dotnet publish (tui) failed (exit $LASTEXITCODE)" }
-
-    $exe = Join-Path $publishDir 'AssetMemory.Tui.exe'
-    if (-not (Test-Path $exe)) { throw "Expected exe not found at $exe" }
-    $sizeMb = [math]::Round((Get-Item $exe).Length / 1MB, 1)
-    Write-Host "Published: $publishDir  (AssetMemory.Tui.exe = $sizeMb MB)" -ForegroundColor Green
-
-    if (-not $NoZip) { Compress-Edition -PublishDir $publishDir -ZipName 'AssetMemory-Tui-win-x64.zip' }
-}
-
-function Publish-Standalone {
-    $project = Join-Path $root 'src\AssetMemory.Standalone'
-    $publishDir = Join-Path $project 'bin\Release\net10.0-windows\win-x64\publish'
-
-    Write-Host "Publishing self-contained win-x64 STANDALONE build..." -ForegroundColor Cyan
-    if (Test-Path $publishDir) { Remove-Item -Recurse -Force $publishDir }
-    dotnet publish $project -c Release
-    if ($LASTEXITCODE -ne 0) { throw "dotnet publish (standalone) failed (exit $LASTEXITCODE)" }
-
-    $exe = Join-Path $publishDir 'AssetMemory.Standalone.exe'
-    if (-not (Test-Path $exe)) { throw "Expected exe not found at $exe" }
-
-    $sizeMb = [math]::Round((Get-Item $exe).Length / 1MB, 1)
-    Write-Host "Published: $publishDir  (AssetMemory.Standalone.exe = $sizeMb MB)" -ForegroundColor Green
-
-    if (-not $NoZip) { Compress-Edition -PublishDir $publishDir -ZipName 'AssetMemory-Standalone-win-x64.zip' }
-}
-
-$onlySwitches = @($WebOnly, $TuiOnly, $StandaloneOnly) | Where-Object { $_ }
-if ($onlySwitches.Count -gt 1) { throw "Pass at most one of -WebOnly / -TuiOnly / -StandaloneOnly." }
-
-if (-not $TuiOnly -and -not $StandaloneOnly) { Publish-Web }
-if (-not $WebOnly -and -not $StandaloneOnly) { Publish-Tui }
-if (-not $WebOnly -and -not $TuiOnly) { Publish-Standalone }

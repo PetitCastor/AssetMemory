@@ -1,11 +1,9 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/AssetMemory/AssetMemory.csproj" />
     <Project Path="src/AssetMemory.Collector/AssetMemory.Collector.csproj" />
     <Project Path="src/AssetMemory.Core/AssetMemory.Core.csproj" />
     <Project Path="src/AssetMemory.Data/AssetMemory.Data.csproj" />
-    <Project Path="src/AssetMemory.Tui/AssetMemory.Tui.csproj" />
-    <Project Path="src/AssetMemory.UI/AssetMemory.UI.csproj" />
-    <Project Path="src/AssetMemory.Standalone/AssetMemory.Standalone.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/AssetMemory.Collector.Tests/AssetMemory.Collector.Tests.csproj" />
