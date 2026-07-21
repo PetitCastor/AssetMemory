@@ -75,6 +75,106 @@ public class EventParserTests
         Assert.False(new MoveEventParser().TryParse(Entry(OpenLine), out _));
     }
 
+    // ---------- DropEventParser ----------
+    // Dropping an item (e.g. onto the ground or a freight elevator platform) has no destination
+    // inventory, and the game splits it across three lines whose Type tag drifts:
+    // Type[Drop] (the gate) -> Type[Interaction] (carries quantity) -> UnstowPendingEntities
+    // (carries the spawned world entity id). All three share one request id.
+
+    private const string DropAddLine =
+        "<2026-07-20T20:34:16.356Z> [Notice] <Add Inventory Management Move> New request[89] Player[Arcadiius] Type[Drop] SourceInventory[706759485577:Container:0] TargetInventory[INVALID] ItemClass[srvl_armor_heavy_helmet_01_01_10] StoredEntity[NULL] LocallyDetached[No] LocalAttached[NULL, ] PendingMoves[1, ] Caller[CSCLocalPlayerPersonalThoughtComponent::DropItemFromContainerImpl] [Team_CoreGameplayFeatures][Inventory]";
+    private const string DropQueuedLine =
+        "<2026-07-20T20:34:16.357Z> [Notice] <InventoryManagementRequest> Queued Request[89] Type[Interaction] for 'Arcadiius' [204821708183] Source Inventory[706759485577:Container:0] Target Inventory[INVALID]. Source[srvl_armor_heavy_helmet_01_01_10] amount[1] rank[amqrsvhoajhju]. Target[NULL] amount[0] rank[]. Item[NONE] action[None]. RequestInProgress[0] CurrentProcess[] [Team_CoreGameplayFeatures][Inventory]";
+    private const string DropUnstowLine =
+        "<2026-07-20T20:34:16.997Z> [Notice] <UnstowPendingEntities> Unstow Request[89] for 'Arcadiius' [204821708183] finalized spawn of 'srvl_armor_heavy_helmet_01_01_10_724751852287' [724751852287], 2 remaining [Team_CoreGameplayFeatures][Inventory]";
+
+    [Fact]
+    public void Drop_pairs_all_three_lines_into_a_dropped_event()
+    {
+        var parser = new DropEventParser();
+
+        Assert.False(parser.TryParse(Entry(DropAddLine), out _));
+        Assert.False(parser.TryParse(Entry(DropQueuedLine), out _));
+        Assert.True(parser.TryParse(Entry(DropUnstowLine), out var ev));
+
+        var dropped = Assert.IsType<ItemDroppedEvent>(ev);
+        Assert.Equal("Arcadiius", dropped.Player);
+        Assert.Equal("srvl_armor_heavy_helmet_01_01_10", dropped.ItemClass);
+        Assert.Equal(1, dropped.Quantity);
+        Assert.Equal(706759485577, dropped.Source.Owner);
+        Assert.Equal(InventoryKind.Container, dropped.Source.Kind);
+        Assert.Equal(724751852287, dropped.EntityId);
+        Assert.Equal(89, dropped.RequestId);
+    }
+
+    [Fact]
+    public void Drop_ignores_an_ordinary_move_on_the_add_move_line()
+    {
+        const string addMoveLine =
+            "<2026-07-20T20:33:50.598Z> [Notice] <Add Inventory Management Move> New request[82] Player[Arcadiius] Type[Move] SourceInventory[725314528152:Container:0] TargetInventory[706759485577:Container:0] ItemClass[srvl_armor_heavy_helmet_01_01_10] StoredEntity[NULL] LocallyDetached[No] LocalAttached[NULL, ] PendingMoves[1, ] Caller[CSCLocalPlayerPersonalThoughtComponent::OnInventoryMoveItemOntoUnoccupiedPosition] [Team_CoreGameplayFeatures][Inventory]";
+        Assert.False(new DropEventParser().TryParse(Entry(addMoveLine), out _));
+    }
+
+    [Fact]
+    public void Drop_ignores_an_unstow_line_with_no_pending_drop()
+    {
+        Assert.False(new DropEventParser().TryParse(Entry(DropUnstowLine), out _));
+    }
+
+    [Fact]
+    public void Drop_is_dispatched_end_to_end_by_the_aggregate_parser()
+    {
+        var reader = new InventoryLogReader();
+        var events = reader.Read([DropAddLine, DropQueuedLine, DropUnstowLine]).ToList();
+
+        var dropped = Assert.IsType<ItemDroppedEvent>(Assert.Single(events));
+        Assert.Equal(724751852287, dropped.EntityId);
+    }
+
+    // ---------- PlayerLocationParser ----------
+    // A loading platform (ship / freight elevator) reaching an Open state names the station the
+    // player is at via the trailing token of its manager name — a landing-zone place (Levski) or a
+    // bare system on a hangar elevator (Nyx). Only Open transitions, and only on a token change.
+
+    private const string PlatformOpenLevski =
+        "<2026-07-20T23:17:33.032Z> [Notice] <CSCLoadingPlatformManager::OnLoadingPlatformStateChanged> [Loading Platform] Loading Platform Manager [LoadingPlatform_FreightElevator_Util_Exterior_Manager_Levski] Platform state changed to OpenIdle [Team_CoreGameplayFeatures][Cargo]";
+    private const string PlatformOpenNyx =
+        "<2026-07-20T23:21:41.475Z> [Notice] <CSCLoadingPlatformManager::OnLoadingPlatformStateChanged> [Loading Platform] Loading Platform Manager [LoadingPlatformManager_ShipElevator_HangarMediumFront_Nyx] Platform state changed to OpenIdle [Team_CoreGameplayFeatures][Cargo]";
+    private const string PlatformClosedLevski =
+        "<2026-07-20T23:17:30.857Z> [Notice] <CSCLoadingPlatformManager::OnLoadingPlatformStateChanged> [Loading Platform] Loading Platform Manager [LoadingPlatform_FreightElevator_Util_Exterior_Manager_Levski] Platform state changed to ClosedIdle [Team_CoreGameplayFeatures][Cargo]";
+
+    [Fact]
+    public void Platform_open_yields_place_token()
+    {
+        Assert.True(new PlayerLocationParser().TryParse(Entry(PlatformOpenLevski), out var ev));
+        var loc = Assert.IsType<PlayerLocationEvent>(ev);
+        Assert.Equal("Levski", loc.LocationToken);
+    }
+
+    [Fact]
+    public void Platform_open_yields_bare_system_token_on_a_hangar_elevator()
+    {
+        Assert.True(new PlayerLocationParser().TryParse(Entry(PlatformOpenNyx), out var ev));
+        Assert.Equal("Nyx", Assert.IsType<PlayerLocationEvent>(ev).LocationToken);
+    }
+
+    [Fact]
+    public void Platform_ignores_a_closed_transition()
+    {
+        Assert.False(new PlayerLocationParser().TryParse(Entry(PlatformClosedLevski), out _));
+    }
+
+    [Fact]
+    public void Platform_dedupes_the_same_token_but_re_emits_on_change()
+    {
+        var parser = new PlayerLocationParser();
+
+        Assert.True(parser.TryParse(Entry(PlatformOpenLevski), out _));
+        Assert.False(parser.TryParse(Entry(PlatformOpenLevski), out _)); // same platform still cycling
+        Assert.True(parser.TryParse(Entry(PlatformOpenNyx), out var ev)); // moved to a different platform
+        Assert.Equal("Nyx", Assert.IsType<PlayerLocationEvent>(ev).LocationToken);
+    }
+
     // ---------- GridItemCountParser ----------
 
     [Fact]

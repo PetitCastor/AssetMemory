@@ -114,6 +114,162 @@ public class EventApplierTests
     }
 
     [Fact]
+    public void Dropped_debits_source_and_credits_a_labelled_entity_location()
+    {
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            var names = new ItemNameResolver(new Dictionary<string, string>
+            {
+                ["srvl_armor_heavy_helmet_01_01_10"] = "Overlord Helmet Mirador",
+            });
+            var applier = ApplierFor(store, names);
+            store.UpsertLocation(706759485577, T0, null);
+            var item = store.EnsureItem("srvl_armor_heavy_helmet_01_01_10", "Overlord Helmet Mirador");
+            store.AdjustHolding(706759485577, item, 1, T0);
+
+            applier.Apply(new ItemDroppedEvent(
+                T0.AddSeconds(1),
+                Player: "Arcadiius",
+                ItemClass: "srvl_armor_heavy_helmet_01_01_10",
+                Quantity: 1,
+                Source: new InventoryRef(706759485577, InventoryKind.Container, 0, "706759485577:Container:0"),
+                EntityId: 724751852287,
+                RequestId: 89));
+
+            Assert.Null(store.GetHolding(706759485577, item));  // debited to zero -> removed
+            var dropped = store.GetHolding(724751852287, item)!;
+            Assert.Equal(1, dropped.Quantity);
+            Assert.Equal("Dropped: Overlord Helmet Mirador", store.GetLocation(724751852287)!.Label);
+        }
+    }
+
+    [Fact]
+    public void Dropped_nests_under_the_last_known_place_instead_of_going_to_other()
+    {
+        // A freight-elevator (or any ground) drop carries no place of its own -- it should land
+        // under wherever the player was last identified, same as a Stor-All box nests under where
+        // it was opened, rather than surfacing as a disconnected top-level "Other" row.
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            var names = new ItemNameResolver(new Dictionary<string, string>
+            {
+                ["srvl_armor_heavy_helmet_01_01_10"] = "Overlord Helmet Mirador",
+            });
+            var applier = ApplierFor(store, names);
+
+            applier.Apply(new StationIdentifiedEvent(
+                T0, "Arcadiius", PlaceId: 141810852, StationCode: "RR_JP_NyxCastra"));
+            applier.Apply(new ItemDroppedEvent(
+                T0.AddSeconds(1), "Arcadiius", "srvl_armor_heavy_helmet_01_01_10", 1,
+                new InventoryRef(706759485577, InventoryKind.Container, 0, "706759485577:Container:0"),
+                EntityId: 724751852287, RequestId: 89));
+
+            var dropLocation = Assert.Single(store.GetContainersForPlace(141810852));
+            Assert.Equal(724751852287, dropLocation.Id);
+            Assert.Equal("Dropped: Overlord Helmet Mirador", dropLocation.Label);
+            Assert.Equal(1, store.GetHoldingDetailsPage(141810852, null, null, "item", true, 1, 50).TotalUnits);
+        }
+    }
+
+    [Fact]
+    public void ResetSessionState_clears_the_last_known_place_so_a_later_drop_falls_back_to_top_level()
+    {
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            var applier = ApplierFor(store);
+            applier.Apply(new StationIdentifiedEvent(
+                T0, "Arcadiius", PlaceId: 141810852, StationCode: "RR_JP_NyxCastra"));
+
+            applier.ResetSessionState();
+
+            applier.Apply(new ItemDroppedEvent(
+                T0.AddSeconds(1), "Arcadiius", "medpen", 1,
+                new InventoryRef(706759485577, InventoryKind.Container, 0, "706759485577:Container:0"),
+                EntityId: 724751852287, RequestId: 89));
+
+            Assert.Empty(store.GetContainersForPlace(141810852));  // not nested under the stale place
+            var item = store.GetItem("medpen")!;
+            Assert.Equal(1, store.GetHolding(724751852287, item.Id)!.Quantity);  // still tracked, just top-level
+        }
+    }
+
+    // ---------- PlayerLocation (loading-platform hint) ----------
+
+    [Fact]
+    public void PlayerLocation_reconnects_a_drop_to_a_place_a_prior_station_id_already_minted()
+    {
+        // The freight-elevator fix: the player opened Levski's Local Inventory in a past session (so
+        // the place row exists) but not this one. A platform hint carrying "Levski" must reconnect to
+        // that place by label so the drop nests under Levski instead of a top-level "Other" row --
+        // even though the hint itself carries no numeric place id.
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            var applier = ApplierFor(store);
+            applier.Apply(new StationIdentifiedEvent(
+                T0, "Arcadiius", PlaceId: 141810852, StationCode: "Nyx_Levski"));
+            applier.ResetSessionState();  // simulate a fresh session: place row persists, in-memory state does not
+
+            applier.Apply(new PlayerLocationEvent(T0.AddSeconds(1), "Levski"));
+            applier.Apply(new ItemDroppedEvent(
+                T0.AddSeconds(2), "Arcadiius", "medpen", 1,
+                new InventoryRef(706759485577, InventoryKind.Container, 0, "706759485577:Container:0"),
+                EntityId: 724751852287, RequestId: 89));
+
+            var drop = Assert.Single(store.GetContainersForPlace(141810852));
+            Assert.Equal(724751852287, drop.Id);
+            Assert.DoesNotContain("Other", store.GetSystemsWithHoldings());
+        }
+    }
+
+    [Fact]
+    public void PlayerLocation_tags_a_placeless_drop_with_the_current_system_not_other()
+    {
+        // A bare-system hint (a hangar ship/freight elevator names only "Nyx") can't reconnect to a
+        // place, but it still pulls the drop out of the "Other" bucket and onto Nyx.
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            var applier = ApplierFor(store);
+            applier.Apply(new PlayerLocationEvent(T0, "Nyx"));
+            applier.Apply(new ItemDroppedEvent(
+                T0.AddSeconds(1), "Arcadiius", "medpen", 1,
+                new InventoryRef(706759485577, InventoryKind.Container, 0, "706759485577:Container:0"),
+                EntityId: 724751852287, RequestId: 89));
+
+            var systems = store.GetSystemsWithHoldings().ToList();
+            Assert.Contains("Nyx", systems);
+            Assert.DoesNotContain("Other", systems);
+            Assert.Equal("Dropped: Medpen", store.GetLocation(724751852287)!.Label); // top-level, labelled row
+        }
+    }
+
+    [Fact]
+    public void ResetSessionState_clears_the_last_known_system_so_a_later_drop_falls_back_to_other()
+    {
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            var applier = ApplierFor(store);
+            applier.Apply(new PlayerLocationEvent(T0, "Nyx"));
+
+            applier.ResetSessionState();
+
+            applier.Apply(new ItemDroppedEvent(
+                T0.AddSeconds(1), "Arcadiius", "medpen", 1,
+                new InventoryRef(706759485577, InventoryKind.Container, 0, "706759485577:Container:0"),
+                EntityId: 724751852287, RequestId: 89));
+
+            var systems = store.GetSystemsWithHoldings().ToList();
+            Assert.Contains("Other", systems);   // system hint was wiped, so the drop falls back
+            Assert.DoesNotContain("Nyx", systems);
+        }
+    }
+
+    [Fact]
     public void ContainerOpened_creates_location_row_without_a_label()
     {
         var (store, conn) = TestStore.CreateMigrated();

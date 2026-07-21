@@ -34,6 +34,38 @@ public sealed class EventApplier
     public DateTimeOffset? InceptionUtc { get; set; }
 
     /// <summary>
+    /// The place id of the most recently applied <see cref="StationIdentifiedEvent"/> -- the
+    /// player's last known location, used to nest a drop's synthetic entity location under wherever
+    /// it actually happened instead of leaving it a disconnected top-level row. Transient, in-memory
+    /// session state (not persisted): a full rebuild replays <see cref="StationIdentifiedEvent"/>s in
+    /// log order too, so it self-corrects during replay -- but the caller must still call
+    /// <see cref="ResetSessionState"/> alongside wiping the store, or a rebuild's earliest drops (before
+    /// the replay reaches its first station) would wrongly inherit the place from the previous run.
+    /// </summary>
+    private long? _lastKnownPlaceId;
+
+    /// <summary>
+    /// The system bucket (see <see cref="ISystemNameResolver"/>) of the player's last known location.
+    /// Companion to <see cref="_lastKnownPlaceId"/> for the case where the location is known only by
+    /// system, not by a numeric place -- e.g. a hangar loading platform tagged <c>Nyx</c>, or a
+    /// <see cref="StationIdentifiedEvent"/> whose place row exists but whose drop falls through the
+    /// top-level fallback below. Lets such a drop surface under its real system instead of "Other".
+    /// Same transient, self-correcting-on-replay contract as <see cref="_lastKnownPlaceId"/>.
+    /// </summary>
+    private string? _lastKnownSystem;
+
+    // The system resolvers' sentinel for "couldn't place it" (see SystemNameResolver). Treated as
+    // "no information" here: it never overwrites a real system we already hold.
+    private const string UnknownSystem = "Other";
+
+    /// <summary>Clears transient session state. Call this together with wiping the store (e.g. on a sync-inception rebuild or "start fresh") so stale state from before the wipe can't leak into the replay.</summary>
+    public void ResetSessionState()
+    {
+        _lastKnownPlaceId = null;
+        _lastKnownSystem = null;
+    }
+
+    /// <summary>
     /// Applies a whole sequence of events under one transaction. Use this for any multi-event
     /// batch (a tick's worth of new lines, a whole backlog file) -- applying events one at a
     /// time outside a transaction means every write autocommits (and fsyncs) on its own, which
@@ -73,6 +105,8 @@ public sealed class EventApplier
         switch (ev)
         {
             case ItemMovedEvent move: ApplyMove(move); break;
+            case ItemDroppedEvent dropped: ApplyDropped(dropped); break;
+            case PlayerLocationEvent loc: ApplyPlayerLocation(loc); break;
             case EquippedItemEvent eq: ApplyEquipped(eq); break;
             case ContainerOpenedEvent open: ApplyOpened(open); break;
             case ContainerClosedEvent close: ApplyClosed(close); break;
@@ -106,6 +140,50 @@ public sealed class EventApplier
         _store.AdjustHolding(target, itemId, +move.Quantity, move.Timestamp);
     }
 
+    // Dropping has no destination inventory -- the item becomes a loose world entity instead of
+    // landing in another inventory. That entity id stands in as its own location (labelled so it
+    // surfaces in the UI) rather than letting the item vanish from tracked holdings.
+    private void ApplyDropped(ItemDroppedEvent dropped)
+    {
+        var displayName = _names.Resolve(dropped.ItemClass);
+        var itemId = _store.EnsureItem(dropped.ItemClass, displayName);
+        var source = LocationKey(dropped.Source);
+
+        _store.UpsertLocation(source, dropped.Timestamp, label: null);
+        _store.AdjustHolding(source, itemId, -dropped.Quantity, dropped.Timestamp);
+
+        // Nest under the last place we saw the player at, same as a Stor-All box nests under where
+        // it was opened. When no place is known yet (a drop before any station this ledger, e.g. at a
+        // mission site with no inventory panel) fall back to a top-level location -- but still tag it
+        // with the last known system so it surfaces under Nyx/Stanton/etc. instead of the "Other"
+        // bucket. A later station id or loading-platform hint self-corrects it on the next rebuild.
+        var label = $"Dropped: {displayName ?? dropped.ItemClass}";
+        if (_lastKnownPlaceId is { } placeId)
+            _store.UpsertContainer(dropped.EntityId, placeId, dropped.Timestamp, label);
+        else
+            _store.UpsertLocation(dropped.EntityId, dropped.Timestamp, label, _lastKnownSystem);
+
+        _store.AdjustHolding(dropped.EntityId, itemId, +dropped.Quantity, dropped.Timestamp);
+    }
+
+    // A soft location hint from a loading platform (ship / freight elevator): no numeric place id, so
+    // it can only (a) tag the player's current system and (b) reconnect to a place a prior
+    // StationIdentifiedEvent already minted, matched by readable label. It never mints a place itself.
+    // This is what pulls a freight-elevator drop out of "Other" and onto the station it happened at,
+    // even when the player never opened that station's Local Inventory panel.
+    private void ApplyPlayerLocation(PlayerLocationEvent loc)
+    {
+        var system = _systems.Resolve(loc.LocationToken);
+        if (system != UnknownSystem)
+            _lastKnownSystem = system;
+
+        if (_store.FindPlaceByLabel(loc.LocationToken) is { } place)
+        {
+            _lastKnownPlaceId = place.Id;
+            _lastKnownSystem = place.System ?? _lastKnownSystem;
+        }
+    }
+
     private void ApplyEquipped(EquippedItemEvent eq)
     {
         var itemId = _store.EnsureItem(eq.ItemClass, _names.Resolve(eq.ItemClass));
@@ -126,6 +204,9 @@ public sealed class EventApplier
         var system = _systems.Resolve(station.StationCode);
         _store.UpsertLocation(station.PlaceId, station.Timestamp,
             string.IsNullOrEmpty(label) ? null : label, system);
+        _lastKnownPlaceId = station.PlaceId;
+        if (system != UnknownSystem)
+            _lastKnownSystem = system;
     }
 
     // Labels the box's holdings key (its GEID) so its contents surface, and records the place it
@@ -137,6 +218,6 @@ public sealed class EventApplier
         if (container.ParentLocationId > 0)
             _store.UpsertContainer(container.ContainerId, container.ParentLocationId, container.Timestamp, label);
         else
-            _store.UpsertLocation(container.ContainerId, container.Timestamp, label);
+            _store.UpsertLocation(container.ContainerId, container.Timestamp, label, _lastKnownSystem);
     }
 }

@@ -27,6 +27,23 @@ public sealed record ItemMovedEvent(
     InventoryRef Target,
     int RequestId) : InventoryEvent(Timestamp);
 
+/// <summary>
+/// An item was dropped out of an inventory into the physical world (e.g. onto the ground, a
+/// freight elevator platform, or anywhere else with no inventory of its own) rather than moved to
+/// another inventory. The game logs this as <c>Type[Drop]</c> with <c>TargetInventory[INVALID]</c>,
+/// so unlike <see cref="ItemMovedEvent"/> there is no destination inventory ref -- <see cref="EntityId"/>
+/// (the spawned world entity, reported by the paired <c>UnstowPendingEntities</c> line) stands in for
+/// one, so the drop still gets a place of its own to be tracked at instead of vanishing.
+/// </summary>
+public sealed record ItemDroppedEvent(
+    DateTimeOffset Timestamp,
+    string Player,
+    string ItemClass,
+    int Quantity,
+    InventoryRef Source,
+    long EntityId,
+    int RequestId) : InventoryEvent(Timestamp);
+
 /// <summary>The stack count reported when a container is opened (count of stacks, not units).</summary>
 public sealed record GridItemCountEvent(
     DateTimeOffset Timestamp,
@@ -71,3 +88,17 @@ public sealed record ContainerIdentifiedEvent(
     string ContainerClass,
     int ScuSize,
     long ParentLocationId) : InventoryEvent(Timestamp);
+
+/// <summary>
+/// The player rode or summoned a loading platform (a ship or freight elevator) at a station. The
+/// platform-manager name carries a trailing location token -- a landing-zone place name (e.g.
+/// <c>Levski</c>) or, on a hangar elevator, a bare system name (e.g. <c>Nyx</c>). Unlike
+/// <see cref="StationIdentifiedEvent"/> this carries no <c>GEID:Location:placeId</c>, so on its own
+/// it can't mint a place; it is a soft "player is here" hint the applier uses to tag the current
+/// system and to reconnect to a place a prior <see cref="StationIdentifiedEvent"/> already minted
+/// (matched by label). That lets a drop made before -- or entirely without -- the Local Inventory
+/// panel ever being opened still land at the right station instead of a system-less "Other" row.
+/// </summary>
+public sealed record PlayerLocationEvent(
+    DateTimeOffset Timestamp,
+    string LocationToken) : InventoryEvent(Timestamp);

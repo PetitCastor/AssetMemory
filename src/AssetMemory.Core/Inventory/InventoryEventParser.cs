@@ -28,10 +28,12 @@ public sealed class InventoryEventParser
         new NestedContainerParser(),
         new ContainerOpenedParser(),
         new MoveEventParser(),
+        new DropEventParser(),
         new GridItemCountParser(),
         new EquippedItemParser(),
         new ContainerClosedParser(),
         new StationInventoryParser(),
+        new PlayerLocationParser(),
     ];
 
     public bool TryParse(LogEntry entry, [NotNullWhen(true)] out InventoryEvent? ev)

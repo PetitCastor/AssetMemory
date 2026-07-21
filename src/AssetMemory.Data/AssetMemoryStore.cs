@@ -609,6 +609,31 @@ public sealed class AssetMemoryStore
     }
 
     /// <summary>
+    /// The most-recently-seen labelled top-level place (<c>parent_id IS NULL</c>) whose label equals
+    /// <paramref name="label"/> exactly, together with its resolved system, or null if none exists.
+    /// Lets a location hint that carries only a readable name -- see
+    /// <see cref="AssetMemory.Core.Inventory.Events.PlayerLocationEvent"/> -- be reconnected to the
+    /// numeric place a prior <c>StationIdentifiedEvent</c> already minted, so a drop can nest under
+    /// the real place instead of a synthetic top-level "Other" row.
+    /// </summary>
+    public (long Id, string? System)? FindPlaceByLabel(string label)
+    {
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT l.id, l.system
+            FROM locations l
+            WHERE l.parent_id IS NULL AND l.label = $label
+            ORDER BY l.last_seen_utc DESC
+            LIMIT 1;
+            """;
+        cmd.Parameters.AddWithValue("$label", label);
+        using var r = cmd.ExecuteReader();
+        if (!r.Read())
+            return null;
+        return (r.GetInt64(0), r.IsDBNull(1) ? null : r.GetString(1));
+    }
+
+    /// <summary>
     /// Labelled containers (<c>parent_id = placeId</c>) sitting at <paramref name="placeId"/> that
     /// currently hold at least one item -- backs the second (container) dropdown. Empty when the
     /// place has no stocked boxes, in which case the UI need not render the dropdown at all.
