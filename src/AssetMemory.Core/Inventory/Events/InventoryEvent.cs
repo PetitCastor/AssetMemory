@@ -102,3 +102,28 @@ public sealed record ContainerIdentifiedEvent(
 public sealed record PlayerLocationEvent(
     DateTimeOffset Timestamp,
     string LocationToken) : InventoryEvent(Timestamp);
+
+/// <summary>
+/// The player interacted with a station's freight-elevator inventory grid, which the game logs as
+/// <c>Freight Inventory Grid Requesting Inventory[GEID:Location:&lt;placeId&gt;]</c>. The freight
+/// grid shares its <see cref="PlaceId"/> with the station's own local inventory (same
+/// <c>Location:placeId</c> key a move-to-locker uses), so this is a hard, numeric confirmation of
+/// which station the player is standing at right now — used to keep the applier's "current place"
+/// fresh so a following freight descent can attribute the just-dropped items to it.
+/// </summary>
+public sealed record FreightInventoryEvent(
+    DateTimeOffset Timestamp,
+    long PlaceId) : InventoryEvent(Timestamp);
+
+/// <summary>
+/// A freight elevator was sent down — the game logs the loading-platform state
+/// <c>changed to LoweringPlatform</c> on a <c>FreightElevator</c> manager. This is the "freight goes
+/// down" moment: any items dropped onto that platform shortly before are now delivered to the
+/// station, so the applier moves them from the transient "Dropped" bucket onto the current station's
+/// location inventory. <see cref="LocationToken"/> is the platform-manager's trailing token (a place
+/// like <c>Levski</c> or a bare system like <c>Nyx</c>); the place id itself comes from the applier's
+/// current-place state, not this token.
+/// </summary>
+public sealed record FreightDescendedEvent(
+    DateTimeOffset Timestamp,
+    string LocationToken) : InventoryEvent(Timestamp);

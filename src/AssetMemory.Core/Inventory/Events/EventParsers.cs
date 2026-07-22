@@ -116,6 +116,13 @@ public sealed partial class DropEventParser : IInventoryEventParser
 {
     private static readonly TimeSpan PairWindow = TimeSpan.FromSeconds(2);
 
+    // The game renamed the category carrying the "New request … Type[Drop]" gate line from
+    // "InventoryManagement" (builds through 12122953, 15 Jul 26) to "Add Inventory Management Move"
+    // (build 12232306+, 16 Jul 26 on); accept both so drops parse across builds and back-history.
+    // The Type[Drop] check below still disambiguates from the "InventoryManagement … New request …
+    // Type[OpenNestedInventory]" line that shares the older category.
+    private static readonly string[] DropGateCategories = ["Add Inventory Management Move", "InventoryManagement"];
+
     [GeneratedRegex(@"finalized spawn of '[^']*'\s*\[(\d+)\]", RegexOptions.Compiled)]
     private static partial Regex SpawnedEntityRegex();
 
@@ -130,7 +137,7 @@ public sealed partial class DropEventParser : IInventoryEventParser
     {
         ev = null;
 
-        if (entry.Category == "Add Inventory Management Move"
+        if (Array.IndexOf(DropGateCategories, entry.Category) >= 0
             && entry.Message.StartsWith("New request", StringComparison.Ordinal)
             && LogFields.Get(entry.Message, "Type") == "Drop")
         {
@@ -450,6 +457,58 @@ public sealed partial class NestedContainerParser : IInventoryEventParser
     {
         var m = ScuSizeRegex().Match(className);
         return FieldHelpers.TryLong(m.Success ? m.Groups[1].Value : null, out size) && size > 0;
+    }
+}
+
+/// <summary>
+/// Recognises the freight-elevator inventory grid being queried:
+/// <c>&lt;InventoryManagement&gt; Freight Inventory Grid Requesting Inventory[GEID:Location:placeId]…</c>.
+/// The <c>placeId</c> is the same one the station's own local inventory keys off, so this is a hard
+/// numeric fix on the station the player is currently at. Emits a <see cref="FreightInventoryEvent"/>;
+/// the applier uses it only to keep its "current place" fresh (it mints no row of its own).
+/// </summary>
+public sealed class FreightInventoryParser : IInventoryEventParser
+{
+    public bool TryParse(LogEntry entry, [NotNullWhen(true)] out InventoryEvent? ev)
+    {
+        ev = null;
+        if (entry.Category != "InventoryManagement"
+            || !entry.Message.StartsWith("Freight Inventory Grid Requesting Inventory", StringComparison.Ordinal))
+            return false;
+
+        if (!InventoryRef.TryParse(LogFields.Get(entry.Message, "Inventory"), out var inv)
+            || inv.Kind != InventoryKind.Location)
+            return false;
+
+        ev = new FreightInventoryEvent(entry.Timestamp, inv.Id);
+        return true;
+    }
+}
+
+/// <summary>
+/// Recognises a freight elevator being sent down: a
+/// <c>&lt;CSCLoadingPlatformManager::OnLoadingPlatformStateChanged&gt;</c> line for a
+/// <c>FreightElevator</c> manager whose state <c>changed to LoweringPlatform</c>. This is the
+/// "freight goes down" moment that turns nearby just-dropped items into a station deposit. Ship
+/// elevators lowering are ignored (only <c>FreightElevator</c> qualifies). Emits a
+/// <see cref="FreightDescendedEvent"/> carrying the manager's trailing location token.
+/// </summary>
+public sealed partial class FreightDescendedParser : IInventoryEventParser
+{
+    [GeneratedRegex(@"Manager \[LoadingPlatform[^\]]*_([A-Za-z0-9]+)\]", RegexOptions.Compiled)]
+    private static partial Regex PlatformManagerToken();
+
+    public bool TryParse(LogEntry entry, [NotNullWhen(true)] out InventoryEvent? ev)
+    {
+        ev = null;
+        if (entry.Category != "CSCLoadingPlatformManager::OnLoadingPlatformStateChanged"
+            || !entry.Message.Contains("FreightElevator", StringComparison.Ordinal)
+            || !entry.Message.Contains("changed to LoweringPlatform", StringComparison.Ordinal))
+            return false;
+
+        var m = PlatformManagerToken().Match(entry.Message);
+        ev = new FreightDescendedEvent(entry.Timestamp, m.Success ? m.Groups[1].Value : "");
+        return true;
     }
 }
 

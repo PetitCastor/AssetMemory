@@ -58,11 +58,28 @@ public sealed class EventApplier
     // "no information" here: it never overwrites a real system we already hold.
     private const string UnknownSystem = "Other";
 
+    // Reserved synthetic location for items dropped where no freight descent tied them to a station
+    // (e.g. a mission site). One flagged bucket with its own top-level system so it never falls into
+    // "Other"; items sit here, retained, until something is done with them. A negative id cannot
+    // collide with a real GEID / place / entity id (all positive).
+    private const long DroppedBucketId = -1;
+    private const string DroppedLabel = "Dropped";
+    private const string DroppedSystem = "Dropped";
+
+    // How long after a drop a freight descent may still claim it as a station deposit. The descent
+    // logs ~10-15s after the drop in practice; 60s is comfortable slack.
+    private static readonly TimeSpan FreightMergeWindow = TimeSpan.FromSeconds(60);
+
+    // Drops awaiting a possible freight descent: each is credited to the Dropped bucket on arrival,
+    // then moved onto the current station's inventory if a descent follows within FreightMergeWindow.
+    private readonly List<(DateTimeOffset At, long ItemId, int Qty)> _pendingFreight = [];
+
     /// <summary>Clears transient session state. Call this together with wiping the store (e.g. on a sync-inception rebuild or "start fresh") so stale state from before the wipe can't leak into the replay.</summary>
     public void ResetSessionState()
     {
         _lastKnownPlaceId = null;
         _lastKnownSystem = null;
+        _pendingFreight.Clear();
     }
 
     /// <summary>
@@ -106,6 +123,8 @@ public sealed class EventApplier
         {
             case ItemMovedEvent move: ApplyMove(move); break;
             case ItemDroppedEvent dropped: ApplyDropped(dropped); break;
+            case FreightInventoryEvent freight: ApplyFreightInventory(freight); break;
+            case FreightDescendedEvent descent: ApplyFreightDescended(descent); break;
             case PlayerLocationEvent loc: ApplyPlayerLocation(loc); break;
             case EquippedItemEvent eq: ApplyEquipped(eq); break;
             case ContainerOpenedEvent open: ApplyOpened(open); break;
@@ -140,31 +159,59 @@ public sealed class EventApplier
         _store.AdjustHolding(target, itemId, +move.Quantity, move.Timestamp);
     }
 
-    // Dropping has no destination inventory -- the item becomes a loose world entity instead of
-    // landing in another inventory. That entity id stands in as its own location (labelled so it
-    // surfaces in the UI) rather than letting the item vanish from tracked holdings.
+    // A dropped item leaves its source inventory and becomes a loose world entity -- the log carries
+    // no destination inventory. Credit it to the flagged "Dropped" bucket and remember it briefly: if
+    // a freight elevator is sent down within FreightMergeWindow, the drop was a station deposit and is
+    // moved onto that station's inventory (see ApplyFreightDescended); otherwise it stays flagged as
+    // Dropped -- a mission-site / ground drop, retained for later.
     private void ApplyDropped(ItemDroppedEvent dropped)
     {
-        var displayName = _names.Resolve(dropped.ItemClass);
-        var itemId = _store.EnsureItem(dropped.ItemClass, displayName);
+        PrunePendingFreight(dropped.Timestamp);
+
+        var itemId = _store.EnsureItem(dropped.ItemClass, _names.Resolve(dropped.ItemClass));
         var source = LocationKey(dropped.Source);
 
         _store.UpsertLocation(source, dropped.Timestamp, label: null);
         _store.AdjustHolding(source, itemId, -dropped.Quantity, dropped.Timestamp);
 
-        // Nest under the last place we saw the player at, same as a Stor-All box nests under where
-        // it was opened. When no place is known yet (a drop before any station this ledger, e.g. at a
-        // mission site with no inventory panel) fall back to a top-level location -- but still tag it
-        // with the last known system so it surfaces under Nyx/Stanton/etc. instead of the "Other"
-        // bucket. A later station id or loading-platform hint self-corrects it on the next rebuild.
-        var label = $"Dropped: {displayName ?? dropped.ItemClass}";
-        if (_lastKnownPlaceId is { } placeId)
-            _store.UpsertContainer(dropped.EntityId, placeId, dropped.Timestamp, label);
-        else
-            _store.UpsertLocation(dropped.EntityId, dropped.Timestamp, label, _lastKnownSystem);
+        _store.UpsertLocation(DroppedBucketId, dropped.Timestamp, DroppedLabel, DroppedSystem);
+        _store.AdjustHolding(DroppedBucketId, itemId, +dropped.Quantity, dropped.Timestamp);
 
-        _store.AdjustHolding(dropped.EntityId, itemId, +dropped.Quantity, dropped.Timestamp);
+        _pendingFreight.Add((dropped.Timestamp, itemId, dropped.Quantity));
     }
+
+    // The freight grid names the station's place id directly, so keep it as the current place -- a
+    // following descent then knows where the freight lands. Mints no row of its own (the station-id
+    // event is what labels the place; an unlabelled id here simply can't receive a merge below).
+    private void ApplyFreightInventory(FreightInventoryEvent freight)
+        => _lastKnownPlaceId = freight.PlaceId;
+
+    // Freight went down: move every drop still inside the merge window from the Dropped bucket onto the
+    // current station's inventory -- the same Location:placeId a move-to-locker uses, so a freight drop
+    // reads exactly like an item moved into local storage ("considered like moving to the location
+    // inventory"). Requires a *labelled* place (a station we've identified); without one the drops stay
+    // flagged in the Dropped bucket rather than vanish onto an invisible row.
+    private void ApplyFreightDescended(FreightDescendedEvent descent)
+    {
+        PrunePendingFreight(descent.Timestamp);
+        if (_pendingFreight.Count == 0)
+            return;
+        if (_lastKnownPlaceId is not { } placeId || _store.GetLocation(placeId)?.Label is null)
+            return;
+
+        _store.UpsertLocation(placeId, descent.Timestamp, label: null);
+        foreach (var (_, itemId, qty) in _pendingFreight)
+        {
+            _store.AdjustHolding(DroppedBucketId, itemId, -qty, descent.Timestamp);
+            _store.AdjustHolding(placeId, itemId, +qty, descent.Timestamp);
+        }
+        _pendingFreight.Clear();
+    }
+
+    // A drop older than the merge window can no longer be claimed by a descent -- forget it (it stays
+    // credited to the Dropped bucket).
+    private void PrunePendingFreight(DateTimeOffset now)
+        => _pendingFreight.RemoveAll(p => now - p.At > FreightMergeWindow);
 
     // A soft location hint from a loading platform (ship / freight elevator): no numeric place id, so
     // it can only (a) tag the player's current system and (b) reconnect to a place a prior
@@ -200,6 +247,11 @@ public sealed class EventApplier
 
     private void ApplyStation(StationIdentifiedEvent station)
     {
+        // INVALID_LOCATION_ID is the game's sentinel for "no real place" -- never mint a labelled row
+        // for it (it would surface as a bogus station with no system, i.e. an "Other" row).
+        if (station.StationCode == "INVALID_LOCATION_ID")
+            return;
+
         var label = _stations.Resolve(station.StationCode);
         var system = _systems.Resolve(station.StationCode);
         _store.UpsertLocation(station.PlaceId, station.Timestamp,
