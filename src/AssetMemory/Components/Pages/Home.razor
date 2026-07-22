@@ -11,6 +11,7 @@
 @inject SyncService SyncSvc
 @inject GameLogCollector Collector
 @inject ControlService Control
+@inject AssetMemory.Data.Events.EventApplier Applier
 
 <PageTitle>Asset Memory - We remember for you</PageTitle>
 
@@ -504,7 +505,11 @@
 
     private void ConfirmClear()
     {
-        Collector.StartFresh(() => Store.ClearAll());
+        Collector.StartFresh(() =>
+        {
+            Store.ClearAll();
+            Applier.ResetSessionState();
+        });
         Settings.ProcessedBackups.Clear();
         Settings.Save(AppPaths.SettingsPath);
         _confirmingClear = false;

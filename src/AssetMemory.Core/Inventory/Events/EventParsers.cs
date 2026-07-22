@@ -89,6 +89,114 @@ public sealed class MoveEventParser : IInventoryEventParser
     }
 }
 
+/// <summary>
+/// Stateful: recognises an item dropped out of an inventory into the physical world (onto the
+/// ground, a freight elevator platform, etc.) rather than moved to another inventory. The game
+/// splits this across three lines with a drifting <c>Type</c> tag, all sharing one request id:
+/// <list type="number">
+/// <item>
+/// <c>&lt;Add Inventory Management Move&gt; New request[N] ... Type[Drop] SourceInventory[...]
+/// ItemClass[...]</c> -- the only line carrying <c>Type[Drop]</c>, so it is the gate. Carries no
+/// quantity. Note the lowercase <c>request[N]</c> here (unlike every other request-id field).
+/// </item>
+/// <item>
+/// <c>&lt;InventoryManagementRequest&gt; Queued Request[N] Type[Interaction] ... Source[class]
+/// amount[n]</c> -- the <c>Type</c> has already drifted to <c>Interaction</c> by this line, so it
+/// cannot gate on its own; matched back to the pending drop by request id. Supplies quantity.
+/// </item>
+/// <item>
+/// <c>&lt;UnstowPendingEntities&gt; Unstow Request[N] ... finalized spawn of '...' [entityId], M
+/// remaining</c> -- reports the world entity the dropped item became. Emits the event.
+/// </item>
+/// </list>
+/// Lines are processed in log order on a single thread; a dropped request that never reaches the
+/// third line (e.g. the drop failed) simply leaves the pending state to be overwritten by the next one.
+/// </summary>
+public sealed partial class DropEventParser : IInventoryEventParser
+{
+    private static readonly TimeSpan PairWindow = TimeSpan.FromSeconds(2);
+
+    // The game renamed the category carrying the "New request … Type[Drop]" gate line from
+    // "InventoryManagement" (builds through 12122953, 15 Jul 26) to "Add Inventory Management Move"
+    // (build 12232306+, 16 Jul 26 on); accept both so drops parse across builds and back-history.
+    // The Type[Drop] check below still disambiguates from the "InventoryManagement … New request …
+    // Type[OpenNestedInventory]" line that shares the older category.
+    private static readonly string[] DropGateCategories = ["Add Inventory Management Move", "InventoryManagement"];
+
+    [GeneratedRegex(@"finalized spawn of '[^']*'\s*\[(\d+)\]", RegexOptions.Compiled)]
+    private static partial Regex SpawnedEntityRegex();
+
+    private int _pendingRequestId;
+    private string? _pendingItemClass;
+    private InventoryRef _pendingSource;
+    private string? _pendingPlayer;
+    private int _pendingQuantity;
+    private DateTimeOffset _pendingAt;
+
+    public bool TryParse(LogEntry entry, [NotNullWhen(true)] out InventoryEvent? ev)
+    {
+        ev = null;
+
+        if (Array.IndexOf(DropGateCategories, entry.Category) >= 0
+            && entry.Message.StartsWith("New request", StringComparison.Ordinal)
+            && LogFields.Get(entry.Message, "Type") == "Drop")
+        {
+            var itemClass = LogFields.Get(entry.Message, "ItemClass");
+            if (!string.IsNullOrEmpty(itemClass)
+                && FieldHelpers.TryInt(LogFields.Get(entry.Message, "request"), out var reqId)
+                && InventoryRef.TryParse(LogFields.Get(entry.Message, "SourceInventory"), out var source))
+            {
+                _pendingRequestId = reqId;
+                _pendingItemClass = itemClass;
+                _pendingSource = source;
+                _pendingPlayer = null;
+                _pendingQuantity = 1; // fallback if the queued line below never turns up
+                _pendingAt = entry.Timestamp;
+            }
+            return false;
+        }
+
+        if (_pendingItemClass is null || entry.Timestamp - _pendingAt > PairWindow)
+            return false;
+
+        if (entry.Category == "InventoryManagementRequest"
+            && entry.Message.StartsWith("Queued Request", StringComparison.Ordinal)
+            && FieldHelpers.TryInt(LogFields.Get(entry.Message, "Request"), out var queuedId)
+            && queuedId == _pendingRequestId)
+        {
+            _pendingPlayer = FieldHelpers.PlayerFromFor(entry.Message);
+            if (FieldHelpers.TryInt(LogFields.Get(entry.Message, "amount"), out var qty))
+                _pendingQuantity = qty;
+            return false;
+        }
+
+        if (entry.Category == "UnstowPendingEntities"
+            && FieldHelpers.TryInt(LogFields.Get(entry.Message, "Request"), out var unstowId)
+            && unstowId == _pendingRequestId)
+        {
+            var m = SpawnedEntityRegex().Match(entry.Message);
+            if (!m.Success || !FieldHelpers.TryLong(m.Groups[1].Value, out var entityId))
+            {
+                _pendingItemClass = null;
+                return false;
+            }
+
+            ev = new ItemDroppedEvent(
+                entry.Timestamp,
+                _pendingPlayer ?? "",
+                _pendingItemClass,
+                _pendingQuantity,
+                _pendingSource,
+                entityId,
+                _pendingRequestId);
+            _pendingItemClass = null;
+            return true;
+        }
+
+        return false;
+    }
+}
+
 /// <summary>Parses a "&lt;GetGridItem&gt; … Number of Items[N] in Inventories[M]" line.</summary>
 public sealed class GridItemCountParser : IInventoryEventParser
 {
@@ -225,6 +333,49 @@ public sealed class StationInventoryParser : IInventoryEventParser
 }
 
 /// <summary>
+/// Stateful: recognises the loading-platform (ship / freight elevator) activity that betrays which
+/// station the player is physically at -- well before, or entirely without, the Local Inventory
+/// panel a <see cref="StationInventoryParser"/> depends on. The platform-manager name carries a
+/// trailing location token: a landing-zone place (<c>..._Manager_Levski</c>) or a bare system on a
+/// hangar elevator (<c>..._HangarMedium_Nyx</c>). Emits only when a platform reaches an
+/// <c>Open…</c> state (the elevator the player is actually using), and only when the token differs
+/// from the last one emitted -- so the burst of light/effect/load-reference lines a single arrival
+/// produces collapses to one <see cref="PlayerLocationEvent"/>. The token has no numeric place id,
+/// so it is a soft hint the applier uses to tag or park drops, never to mint a place.
+/// </summary>
+public sealed partial class PlayerLocationParser : IInventoryEventParser
+{
+    // Trailing underscore-delimited token of the "…Manager [LoadingPlatform…_<token>]" name. The
+    // greedy prefix backtracks to the final underscore, so multi-segment names yield their last part
+    // (…_HangarMedium_Nyx -> "Nyx", …_Exterior_Manager_Levski -> "Levski").
+    [GeneratedRegex(@"Manager \[LoadingPlatform[^\]]*_([A-Za-z0-9]+)\]", RegexOptions.Compiled)]
+    private static partial Regex PlatformManagerToken();
+
+    private string? _lastToken;
+
+    public bool TryParse(LogEntry entry, [NotNullWhen(true)] out InventoryEvent? ev)
+    {
+        ev = null;
+
+        if (entry.Category != "CSCLoadingPlatformManager::OnLoadingPlatformStateChanged"
+            || !entry.Message.Contains("changed to Open", StringComparison.Ordinal))
+            return false;
+
+        var m = PlatformManagerToken().Match(entry.Message);
+        if (!m.Success)
+            return false;
+
+        var token = m.Groups[1].Value;
+        if (token == _lastToken)
+            return false; // same platform still cycling — this location is already reported.
+
+        _lastToken = token;
+        ev = new PlayerLocationEvent(entry.Timestamp, token);
+        return true;
+    }
+}
+
+/// <summary>
 /// Stateful: names a placed storage container (a "Stor-All" SCU box) by pairing the
 /// <c>OpenNestedInventory</c> request that carries its <c>Carryable_TBO_InventoryContainer_NSCU</c>
 /// class with the numeric-ref line (<c>&lt;Query Inventory&gt;</c>, older builds
@@ -306,6 +457,58 @@ public sealed partial class NestedContainerParser : IInventoryEventParser
     {
         var m = ScuSizeRegex().Match(className);
         return FieldHelpers.TryLong(m.Success ? m.Groups[1].Value : null, out size) && size > 0;
+    }
+}
+
+/// <summary>
+/// Recognises the freight-elevator inventory grid being queried:
+/// <c>&lt;InventoryManagement&gt; Freight Inventory Grid Requesting Inventory[GEID:Location:placeId]…</c>.
+/// The <c>placeId</c> is the same one the station's own local inventory keys off, so this is a hard
+/// numeric fix on the station the player is currently at. Emits a <see cref="FreightInventoryEvent"/>;
+/// the applier uses it only to keep its "current place" fresh (it mints no row of its own).
+/// </summary>
+public sealed class FreightInventoryParser : IInventoryEventParser
+{
+    public bool TryParse(LogEntry entry, [NotNullWhen(true)] out InventoryEvent? ev)
+    {
+        ev = null;
+        if (entry.Category != "InventoryManagement"
+            || !entry.Message.StartsWith("Freight Inventory Grid Requesting Inventory", StringComparison.Ordinal))
+            return false;
+
+        if (!InventoryRef.TryParse(LogFields.Get(entry.Message, "Inventory"), out var inv)
+            || inv.Kind != InventoryKind.Location)
+            return false;
+
+        ev = new FreightInventoryEvent(entry.Timestamp, inv.Id);
+        return true;
+    }
+}
+
+/// <summary>
+/// Recognises a freight elevator being sent down: a
+/// <c>&lt;CSCLoadingPlatformManager::OnLoadingPlatformStateChanged&gt;</c> line for a
+/// <c>FreightElevator</c> manager whose state <c>changed to LoweringPlatform</c>. This is the
+/// "freight goes down" moment that turns nearby just-dropped items into a station deposit. Ship
+/// elevators lowering are ignored (only <c>FreightElevator</c> qualifies). Emits a
+/// <see cref="FreightDescendedEvent"/> carrying the manager's trailing location token.
+/// </summary>
+public sealed partial class FreightDescendedParser : IInventoryEventParser
+{
+    [GeneratedRegex(@"Manager \[LoadingPlatform[^\]]*_([A-Za-z0-9]+)\]", RegexOptions.Compiled)]
+    private static partial Regex PlatformManagerToken();
+
+    public bool TryParse(LogEntry entry, [NotNullWhen(true)] out InventoryEvent? ev)
+    {
+        ev = null;
+        if (entry.Category != "CSCLoadingPlatformManager::OnLoadingPlatformStateChanged"
+            || !entry.Message.Contains("FreightElevator", StringComparison.Ordinal)
+            || !entry.Message.Contains("changed to LoweringPlatform", StringComparison.Ordinal))
+            return false;
+
+        var m = PlatformManagerToken().Match(entry.Message);
+        ev = new FreightDescendedEvent(entry.Timestamp, m.Success ? m.Groups[1].Value : "");
+        return true;
     }
 }
 

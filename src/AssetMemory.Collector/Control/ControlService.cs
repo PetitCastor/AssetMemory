@@ -52,7 +52,11 @@ public sealed class ControlService
 
     public void Clear()
     {
-        _collector.StartFresh(() => _store.ClearAll());
+        _collector.StartFresh(() =>
+        {
+            _store.ClearAll();
+            _applier.ResetSessionState();
+        });
         _settings.ProcessedBackups.Clear();
         _settings.Save(_settingsPath);
     }

@@ -113,6 +113,179 @@ public class EventApplierTests
         }
     }
 
+    // ---------- drops: flagged bucket + freight-descent merge ----------
+    // A drop leaves its source and is credited to the flagged "Dropped" bucket (id -1). If a freight
+    // elevator is sent down within the merge window, the drop was a station deposit and is moved onto
+    // that station's inventory (same Location:placeId a locker move uses); otherwise it stays flagged
+    // as Dropped -- a mission-site / ground drop. "Other" is never used.
+
+    private const long DroppedBucket = -1;
+
+    private static ItemDroppedEvent Drop(DateTimeOffset at, string cls, int qty = 1, long entityId = 724751852287)
+        => new(at, "Arcadiius", cls, qty,
+            new InventoryRef(706759485577, InventoryKind.Container, 0, "706759485577:Container:0"),
+            entityId, RequestId: 89);
+
+    [Fact]
+    public void Dropped_without_a_descent_lands_in_the_flagged_Dropped_bucket()
+    {
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            var names = new ItemNameResolver(new Dictionary<string, string>
+            {
+                ["srvl_armor_heavy_helmet_01_01_10"] = "Overlord Helmet Mirador",
+            });
+            var applier = ApplierFor(store, names);
+            store.UpsertLocation(706759485577, T0, null);
+            var item = store.EnsureItem("srvl_armor_heavy_helmet_01_01_10", "Overlord Helmet Mirador");
+            store.AdjustHolding(706759485577, item, 1, T0);
+
+            applier.Apply(Drop(T0.AddSeconds(1), "srvl_armor_heavy_helmet_01_01_10"));
+
+            Assert.Null(store.GetHolding(706759485577, item));                // debited out of the backpack
+            Assert.Equal(1, store.GetHolding(DroppedBucket, item)!.Quantity); // credited to the Dropped bucket
+            Assert.Equal("Dropped", store.GetLocation(DroppedBucket)!.Label);
+            var systems = store.GetSystemsWithHoldings().ToList();
+            Assert.Contains("Dropped", systems);
+            Assert.DoesNotContain("Other", systems);
+        }
+    }
+
+    [Fact]
+    public void Freight_descent_moves_recent_drops_onto_the_current_station_inventory()
+    {
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            var names = new ItemNameResolver(new Dictionary<string, string>
+            {
+                ["srvl_armor_heavy_helmet_01_01_10"] = "Overlord Helmet Mirador",
+            });
+            var applier = ApplierFor(store, names);
+
+            applier.Apply(new StationIdentifiedEvent(T0, "Arcadiius", PlaceId: 3723364946, StationCode: "Nyx_Levski"));
+            applier.Apply(Drop(T0.AddSeconds(1), "srvl_armor_heavy_helmet_01_01_10"));
+            applier.Apply(new FreightDescendedEvent(T0.AddSeconds(11), "Nyx"));
+
+            var item = store.GetItem("srvl_armor_heavy_helmet_01_01_10")!;
+            Assert.Equal(1, store.GetHolding(3723364946, item.Id)!.Quantity);  // landed on Levski's inventory
+            Assert.Null(store.GetHolding(DroppedBucket, item.Id));             // no longer flagged
+            var systems = store.GetSystemsWithHoldings().ToList();
+            Assert.Contains("Nyx", systems);
+            Assert.DoesNotContain("Other", systems);
+            Assert.DoesNotContain("Dropped", systems);                        // Dropped bucket emptied
+            // Rolls up under Nyx > Levski exactly like a locker move.
+            Assert.Equal(1, store.GetHoldingDetailsPage(3723364946, null, null, "item", true, 1, 50).TotalUnits);
+        }
+    }
+
+    [Fact]
+    public void Freight_descent_beyond_the_merge_window_leaves_the_drop_flagged()
+    {
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            var applier = ApplierFor(store);
+            applier.Apply(new StationIdentifiedEvent(T0, "Arcadiius", PlaceId: 3723364946, StationCode: "Nyx_Levski"));
+            applier.Apply(Drop(T0.AddSeconds(1), "medpen"));
+            applier.Apply(new FreightDescendedEvent(T0.AddSeconds(120), "Nyx"));  // > 60s window
+
+            var item = store.GetItem("medpen")!;
+            Assert.Equal(1, store.GetHolding(DroppedBucket, item.Id)!.Quantity);  // stays flagged
+            Assert.Null(store.GetHolding(3723364946, item.Id));                   // not delivered
+        }
+    }
+
+    [Fact]
+    public void Freight_descent_without_a_known_station_leaves_the_drop_flagged()
+    {
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            var applier = ApplierFor(store);
+            applier.Apply(Drop(T0, "medpen"));
+            applier.Apply(new FreightDescendedEvent(T0.AddSeconds(5), "Nyx"));  // no place ever identified
+
+            var item = store.GetItem("medpen")!;
+            Assert.Equal(1, store.GetHolding(DroppedBucket, item.Id)!.Quantity);
+        }
+    }
+
+    [Fact]
+    public void Freight_inventory_grid_supplies_the_place_a_following_descent_delivers_to()
+    {
+        // Without opening the station panel this session, the freight grid line still names the place
+        // id; the place must already be labelled (from any prior id) for the merge to land.
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            var applier = ApplierFor(store);
+            store.UpsertLocation(3723364946, T0, "Levski", "Nyx");   // labelled station row exists
+            applier.Apply(Drop(T0.AddSeconds(1), "medpen"));
+            applier.Apply(new FreightInventoryEvent(T0.AddSeconds(2), PlaceId: 3723364946));
+            applier.Apply(new FreightDescendedEvent(T0.AddSeconds(6), "Nyx"));
+
+            var item = store.GetItem("medpen")!;
+            Assert.Equal(1, store.GetHolding(3723364946, item.Id)!.Quantity);
+            Assert.Null(store.GetHolding(DroppedBucket, item.Id));
+        }
+    }
+
+    [Fact]
+    public void PlayerLocation_reconnects_the_place_so_a_following_descent_delivers_there()
+    {
+        // A loading-platform hint ("Levski") reconnects to a place a prior station id minted (by label),
+        // so even without re-opening the panel this session a freight descent lands the drop at Levski.
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            var applier = ApplierFor(store);
+            applier.Apply(new StationIdentifiedEvent(T0, "Arcadiius", PlaceId: 3723364946, StationCode: "Nyx_Levski"));
+            applier.ResetSessionState();  // fresh session: place row persists, in-memory state does not
+
+            applier.Apply(new PlayerLocationEvent(T0.AddSeconds(1), "Levski"));
+            applier.Apply(Drop(T0.AddSeconds(2), "medpen"));
+            applier.Apply(new FreightDescendedEvent(T0.AddSeconds(8), "Nyx"));
+
+            var item = store.GetItem("medpen")!;
+            Assert.Equal(1, store.GetHolding(3723364946, item.Id)!.Quantity);
+            Assert.Null(store.GetHolding(DroppedBucket, item.Id));
+        }
+    }
+
+    [Fact]
+    public void ResetSessionState_clears_pending_freight_so_a_later_descent_cannot_claim_an_old_drop()
+    {
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            var applier = ApplierFor(store);
+            applier.Apply(new StationIdentifiedEvent(T0, "Arcadiius", PlaceId: 3723364946, StationCode: "Nyx_Levski"));
+            applier.Apply(Drop(T0.AddSeconds(1), "medpen"));
+
+            applier.ResetSessionState();
+
+            applier.Apply(new FreightDescendedEvent(T0.AddSeconds(6), "Nyx"));
+
+            var item = store.GetItem("medpen")!;
+            Assert.Equal(1, store.GetHolding(DroppedBucket, item.Id)!.Quantity);  // still flagged
+            Assert.Null(store.GetHolding(3723364946, item.Id));                   // not claimed
+        }
+    }
+
+    [Fact]
+    public void Station_identified_ignores_the_invalid_location_sentinel()
+    {
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            ApplierFor(store).Apply(new StationIdentifiedEvent(
+                T0, "Arcadiius", PlaceId: 999, StationCode: "INVALID_LOCATION_ID"));
+            Assert.Null(store.GetLocation(999));  // no bogus place row minted
+        }
+    }
+
     [Fact]
     public void ContainerOpened_creates_location_row_without_a_label()
     {
