@@ -56,7 +56,7 @@
         <div class="toolbar">
             <div class="filter-group">
                 <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-                <select @bind="SelectedSystem">
+                <select @bind="SelectedSystem" disabled="@Searching">
                     <option value="">All systems</option>
                     @foreach (var s in Systems)
                     {
@@ -66,7 +66,7 @@
             </div>
             <div class="filter-group">
                 <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
-                <select @bind="SelectedPlace">
+                <select @bind="SelectedPlace" disabled="@Searching">
                     <option value="">All locations</option>
                     @foreach (var p in Places)
                     {
@@ -74,11 +74,15 @@
                     }
                 </select>
             </div>
-            @if (Containers.Count > 0)
+            <label class="filter-group storage-toggle" title="@(HasStorage ? "Show items stored in SCU boxes" : "No SCU storage in this view")">
+                <input type="checkbox" @bind="ShowLocalStorages" disabled="@(Searching || !HasStorage)" />
+                <span>Show local storages</span>
+            </label>
+            @if (ShowLocalStorages && Containers.Count > 0)
             {
                 <div class="filter-group">
                     <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
-                    <select @bind="SelectedContainer">
+                    <select @bind="SelectedContainer" disabled="@Searching">
                         <option value="">(local storage)</option>
                         @foreach (var c in Containers)
                         {
@@ -89,12 +93,16 @@
             }
             <div class="filter-group search">
                 <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-                <input type="text" placeholder="Search items..." title="Type % for any characters or _ for one, e.g. gun% for &quot;starts with&quot;" @bind="SearchTerm" @bind:event="oninput" />
+                <input type="text" placeholder="Search items (everywhere)..." title="Search runs across every location, including SCU boxes and dropped items. Type % for any characters or _ for one, e.g. gun% for &quot;starts with&quot;" @bind="SearchTerm" @bind:event="oninput" />
                 @if (!string.IsNullOrEmpty(SearchTerm))
                 {
-                    <button class="clear-btn" @onclick="() => SearchTerm = string.Empty" title="Clear">&times;</button>
+                    <button class="clear-btn" @onclick="ClearSearch" title="Clear">&times;</button>
                 }
             </div>
+            @if (Searching)
+            {
+                <button class="btn-secondary btn-sm clear-search-btn" @onclick="ClearSearch" title="Clear the search and restore the filters">Clear search</button>
+            }
             <div class="filter-group">
                 <span class="page-size-label">Per page</span>
                 <select @bind="PageSize">
@@ -323,6 +331,26 @@
         set { _selectedContainer = value; _page = 1; LoadData(); }
     }
 
+    // "Show local storages": off by default. Off = SCU-box contents hidden from the list and storage-only
+    // places dropped from the dropdowns; on = current rollup behaviour plus the box drill-down dropdown.
+    // Toggling clears any drilled-into container. The markup disables it when the scope holds no boxes
+    // (HasStorage) or while a search is active (Searching).
+    private bool _showLocalStorages;
+    private bool ShowLocalStorages
+    {
+        get => _showLocalStorages;
+        set { _showLocalStorages = value; _selectedContainer = ""; _page = 1; LoadData(); }
+    }
+
+    // True when the current scope contains at least one SCU-box holding — gates the checkbox's enabled state.
+    private bool HasStorage;
+
+    // A search is global and overrides the location filters, so the dropdowns + checkbox disable while one
+    // is active; the selections are kept and re-applied once the search is cleared.
+    private bool Searching => !string.IsNullOrWhiteSpace(SearchTerm);
+
+    private void ClearSearch() => SearchTerm = string.Empty;
+
     private string SortColumn { get; set; } = "item";
     private bool SortAsc { get; set; } = true;
     private int _page = 1;
@@ -354,6 +382,9 @@
     {
         get
         {
+            if (Searching)
+                return $"Search: “{SearchTerm.Trim()}” — all locations";
+
             if (string.IsNullOrEmpty(SelectedSystem))
                 return "All locations";
 
@@ -525,14 +556,17 @@
         long? containerId = long.TryParse(SelectedContainer, out var cid) ? cid : null;
         var term = string.IsNullOrWhiteSpace(SearchTerm) ? null : SearchTerm.Trim();
 
-        // A system rolls up every place (and its boxes) tagged with it; a place further rolls up its
-        // containers' contents; a chosen container narrows to just that box.
-        _pageResult = Store.GetHoldingDetailsPage(placeId, containerId, term, SortColumn, SortAsc, _page, _pageSize, system);
-        Systems = Store.GetSystemsWithHoldings().ToList();
-        Places = Store.GetPlacesWithHoldings(system).ToList();
-        Containers = placeId is not null
+        // A search term makes the query global (the store ignores scope + the hide-storage filter, so an
+        // item is found wherever it lives). Otherwise a system rolls up every place tagged with it, a place
+        // rolls up its boxes, a container narrows to one box -- and with storage hidden, boxed items and
+        // storage-only places drop out.
+        _pageResult = Store.GetHoldingDetailsPage(placeId, containerId, term, SortColumn, SortAsc, _page, _pageSize, system, ShowLocalStorages);
+        Systems = Store.GetSystemsWithHoldings(ShowLocalStorages).ToList();
+        Places = Store.GetPlacesWithHoldings(system, ShowLocalStorages).ToList();
+        Containers = (ShowLocalStorages && placeId is not null)
             ? Store.GetContainersForPlace(placeId.Value).ToList()
             : [];
+        HasStorage = Store.HasStorageInScope(system, placeId);
     }
 
     private void GoToPage(int page)

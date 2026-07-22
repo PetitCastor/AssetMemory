@@ -439,27 +439,32 @@ public sealed class AssetMemoryStore
     /// </summary>
     public HoldingDetailsPage GetHoldingDetailsPage(
         long? placeId, long? containerId, string? searchTerm, string sortColumn, bool sortAscending, int page, int pageSize,
-        string? system = null)
+        string? system = null, bool includeStorage = true)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(page, 1);
         ArgumentOutOfRangeException.ThrowIfLessThan(pageSize, 1);
         var sortExpr = SortExpression(sortColumn);
         var term = string.IsNullOrWhiteSpace(searchTerm) ? null : BuildSearchPattern(searchTerm);
 
-        // Scope precedence: a chosen container pins to itself; otherwise a chosen place includes its
-        // own rows and any container whose parent_id points back at it; otherwise a chosen system
-        // includes every place (and its containers) tagged with it; otherwise no location filter.
+        // A search term makes the query GLOBAL: it bypasses the scope (system/place/container) and the
+        // hide-storage filter entirely, so an item is found wherever it lives -- a station locker, an SCU
+        // box, or the Dropped bucket. With no term, scope precedence applies (container > place > system),
+        // and unless storage is shown (or a box is explicitly selected) container rows are excluded so the
+        // list holds only place-direct holdings (station lockers + Dropped).
         const string filterSql = """
             FROM holdings h
             JOIN items i ON i.id = h.item_id
             JOIN locations l ON l.id = h.location_id
             LEFT JOIN locations p ON p.id = l.parent_id
             WHERE l.label IS NOT NULL
-              AND ($container IS NULL OR h.location_id = $container)
-              AND ($container IS NOT NULL OR $place IS NULL
-                   OR h.location_id = $place OR l.parent_id = $place)
-              AND ($container IS NOT NULL OR $place IS NOT NULL OR $system IS NULL
-                   OR COALESCE(l.system, p.system, 'Other') = $system)
+              AND ($term IS NOT NULL OR (
+                       ($container IS NULL OR h.location_id = $container)
+                   AND ($container IS NOT NULL OR $place IS NULL
+                        OR h.location_id = $place OR l.parent_id = $place)
+                   AND ($container IS NOT NULL OR $place IS NOT NULL OR $system IS NULL
+                        OR COALESCE(l.system, p.system, 'Other') = $system)
+                   AND ($includeStorage = 1 OR $container IS NOT NULL OR l.parent_id IS NULL)
+                  ))
               AND ($term IS NULL OR i.display_name LIKE $term OR i.class_name LIKE $term)
             """;
 
@@ -472,6 +477,7 @@ public sealed class AssetMemoryStore
         countCmd.Parameters.AddWithValue("$container", (object?)containerId ?? DBNull.Value);
         countCmd.Parameters.AddWithValue("$system", (object?)system ?? DBNull.Value);
         countCmd.Parameters.AddWithValue("$term", (object?)term ?? DBNull.Value);
+        countCmd.Parameters.AddWithValue("$includeStorage", includeStorage ? 1 : 0);
         int totalCount; int distinctLocations; long totalUnits;
         using (var cr = countCmd.ExecuteReader())
         {
@@ -494,6 +500,7 @@ public sealed class AssetMemoryStore
         cmd.Parameters.AddWithValue("$container", (object?)containerId ?? DBNull.Value);
         cmd.Parameters.AddWithValue("$system", (object?)system ?? DBNull.Value);
         cmd.Parameters.AddWithValue("$term", (object?)term ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$includeStorage", includeStorage ? 1 : 0);
         cmd.Parameters.AddWithValue("$take", pageSize);
         cmd.Parameters.AddWithValue("$skip", (page - 1) * pageSize);
         using var r = cmd.ExecuteReader();
@@ -558,9 +565,11 @@ public sealed class AssetMemoryStore
     /// a box still appears here so the user can drill into it. When <paramref name="system"/> is
     /// given, narrows to places tagged with that system bucket (see <see cref="GetSystemsWithHoldings"/>).
     /// </summary>
-    public IEnumerable<LocationRow> GetPlacesWithHoldings(string? system = null)
+    public IEnumerable<LocationRow> GetPlacesWithHoldings(string? system = null, bool includeStorage = true)
     {
         using var cmd = _conn.CreateCommand();
+        // The child-container EXISTS is gated on $includeStorage so that, when storage is hidden, a place
+        // whose only holdings live in SCU boxes drops out of the dropdown (nothing to show for it).
         cmd.CommandText = """
             SELECT l.id, l.label, l.last_seen_utc
             FROM locations l
@@ -568,12 +577,13 @@ public sealed class AssetMemoryStore
               AND l.parent_id IS NULL
               AND ($system IS NULL OR COALESCE(l.system, 'Other') = $system)
               AND (EXISTS (SELECT 1 FROM holdings h WHERE h.location_id = l.id)
-                OR EXISTS (SELECT 1 FROM locations c
+                OR ($includeStorage = 1 AND EXISTS (SELECT 1 FROM locations c
                            JOIN holdings hc ON hc.location_id = c.id
-                           WHERE c.parent_id = l.id))
+                           WHERE c.parent_id = l.id)))
             ORDER BY l.label;
             """;
         cmd.Parameters.AddWithValue("$system", (object?)system ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$includeStorage", includeStorage ? 1 : 0);
         using var r = cmd.ExecuteReader();
         var list = new List<LocationRow>();
         while (r.Read())
@@ -587,20 +597,23 @@ public sealed class AssetMemoryStore
     /// top-level system dropdown. Places with no resolved system (e.g. freestanding local-storage
     /// containers never seen at a station) count toward the <c>"Other"</c> bucket.
     /// </summary>
-    public IEnumerable<string> GetSystemsWithHoldings()
+    public IEnumerable<string> GetSystemsWithHoldings(bool includeStorage = true)
     {
         using var cmd = _conn.CreateCommand();
+        // Same $includeStorage gate as GetPlacesWithHoldings: a system whose only holdings are boxed
+        // vanishes from the system dropdown while storage is hidden.
         cmd.CommandText = """
             SELECT DISTINCT COALESCE(l.system, 'Other')
             FROM locations l
             WHERE l.label IS NOT NULL
               AND l.parent_id IS NULL
               AND (EXISTS (SELECT 1 FROM holdings h WHERE h.location_id = l.id)
-                OR EXISTS (SELECT 1 FROM locations c
+                OR ($includeStorage = 1 AND EXISTS (SELECT 1 FROM locations c
                            JOIN holdings hc ON hc.location_id = c.id
-                           WHERE c.parent_id = l.id))
+                           WHERE c.parent_id = l.id)))
             ORDER BY 1;
             """;
+        cmd.Parameters.AddWithValue("$includeStorage", includeStorage ? 1 : 0);
         using var r = cmd.ExecuteReader();
         var list = new List<string>();
         while (r.Read())
@@ -655,6 +668,33 @@ public sealed class AssetMemoryStore
         while (r.Read())
             list.Add(new LocationRow(r.GetInt64(0), r.GetString(1), ParseUtc(r.GetString(2))));
         return list;
+    }
+
+    /// <summary>
+    /// True if at least one labelled SCU-box container (a location with <c>parent_id</c> set) holds an
+    /// item within the given scope: a specific <paramref name="placeId"/> (its child boxes), a
+    /// <paramref name="system"/> (boxes under any place tagged with it), or global (both null → any box).
+    /// Backs the "show local storages" checkbox — it stays disabled when this is false, since there is
+    /// no storage to reveal in the current view.
+    /// </summary>
+    public bool HasStorageInScope(string? system, long? placeId)
+    {
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT EXISTS (
+                SELECT 1
+                FROM holdings h
+                JOIN locations c ON c.id = h.location_id
+                JOIN locations p ON p.id = c.parent_id
+                WHERE c.label IS NOT NULL
+                  AND c.parent_id IS NOT NULL
+                  AND ($place IS NULL OR c.parent_id = $place)
+                  AND ($place IS NOT NULL OR $system IS NULL OR COALESCE(p.system, 'Other') = $system)
+            );
+            """;
+        cmd.Parameters.AddWithValue("$place", (object?)placeId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$system", (object?)system ?? DBNull.Value);
+        return Convert.ToInt64(cmd.ExecuteScalar(), CultureInfo.InvariantCulture) != 0;
     }
 
     public IEnumerable<ItemRow> SearchItems(string term)
