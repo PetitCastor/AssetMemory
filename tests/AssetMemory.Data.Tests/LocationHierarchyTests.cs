@@ -219,6 +219,102 @@ public class LocationHierarchyTests
         }
     }
 
+    // ---------- optional storage (includeStorage flag) ----------
+
+    [Fact]
+    public void GetHoldingDetailsPage_hides_container_units_when_storage_excluded()
+    {
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            Seed(store); // Place: 5 direct + Box: 3
+            // Storage hidden: only the 5 place-direct units; the box's 3 drop out.
+            Assert.Equal(5, store.GetHoldingDetailsPage(null, null, null, "item", true, 1, 50, includeStorage: false).TotalUnits);
+            Assert.Equal(5, store.GetHoldingDetailsPage(Place, null, null, "item", true, 1, 50, includeStorage: false).TotalUnits);
+            // An explicit box drill-in still works even with storage otherwise hidden.
+            Assert.Equal(3, store.GetHoldingDetailsPage(Place, Box, null, "item", true, 1, 50, includeStorage: false).TotalUnits);
+            // Default (storage shown) still rolls up to 8.
+            Assert.Equal(8, store.GetHoldingDetailsPage(null, null, null, "item", true, 1, 50).TotalUnits);
+        }
+    }
+
+    [Fact]
+    public void GetHoldingDetailsPage_search_is_global_across_boxes_and_dropped_ignoring_scope_and_storage_hide()
+    {
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            var item = Seed(store);                    // Place("Nyx"): 5 direct + Box: 3, item = BEHR Shotgun
+            store.UpsertLocation(-1, T0, "Dropped", "Dropped");
+            store.AdjustHolding(-1, item, 2, T0);      // 2 more of the same item, dropped
+
+            // Search "BEHR" with storage hidden AND an unrelated system scope must still find the item
+            // everywhere: place-direct (5) + box (3) + dropped (2) = 10 across 3 locations.
+            var hit = store.GetHoldingDetailsPage(null, null, "BEHR", "item", true, 1, 50, system: "Stanton", includeStorage: false);
+            Assert.Equal(10, hit.TotalUnits);
+            Assert.Equal(3, hit.DistinctLocations);
+        }
+    }
+
+    [Fact]
+    public void GetPlacesWithHoldings_drops_a_storage_only_place_when_storage_excluded()
+    {
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            // Place has NO direct holdings; only its child box does.
+            store.UpsertLocation(Place, T0, "Nyx Castra Jump Point", "Nyx");
+            store.UpsertContainer(Box, Place, T0, "Stor-All 2 SCU");
+            var item = store.EnsureItem("foo", "Foo");
+            store.AdjustHolding(Box, item, 1, T0);
+
+            Assert.Equal(Place, Assert.Single(store.GetPlacesWithHoldings(includeStorage: true)).Id);
+            Assert.Empty(store.GetPlacesWithHoldings(includeStorage: false));
+        }
+    }
+
+    [Fact]
+    public void GetSystemsWithHoldings_drops_a_storage_only_system_when_storage_excluded()
+    {
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            store.UpsertLocation(Place, T0, "Nyx Castra Jump Point", "Nyx");
+            store.UpsertContainer(Box, Place, T0, "Stor-All 2 SCU");
+            store.UpsertLocation(999, T0, "Some Stanton Hub", "Stanton");
+            var item = store.EnsureItem("foo", "Foo");
+            store.AdjustHolding(Box, item, 1, T0);   // Nyx: boxed only
+            store.AdjustHolding(999, item, 1, T0);   // Stanton: direct
+
+            var shown = store.GetSystemsWithHoldings(includeStorage: true).ToList();
+            Assert.Contains("Nyx", shown);
+            Assert.Contains("Stanton", shown);
+
+            var hidden = store.GetSystemsWithHoldings(includeStorage: false).ToList();
+            Assert.DoesNotContain("Nyx", hidden);   // Nyx was storage-only
+            Assert.Contains("Stanton", hidden);      // Stanton has direct holdings
+        }
+    }
+
+    [Fact]
+    public void HasStorageInScope_reflects_boxes_present_globally_by_system_and_by_place()
+    {
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            Seed(store); // Place("Nyx") has a stocked Box
+            store.UpsertLocation(999, T0, "Some Stanton Hub", "Stanton");
+            var item = store.EnsureItem("widget", "Widget");
+            store.AdjustHolding(999, item, 1, T0);   // Stanton place: direct-only
+
+            Assert.True(store.HasStorageInScope(null, null));         // a box exists somewhere
+            Assert.True(store.HasStorageInScope("Nyx", null));        // Nyx has the box
+            Assert.False(store.HasStorageInScope("Stanton", null));   // Stanton is direct-only
+            Assert.True(store.HasStorageInScope(null, Place));        // the place has a box
+            Assert.False(store.HasStorageInScope(null, 999));         // that place has no box
+        }
+    }
+
     [Fact]
     public void ApplyMigration_upgrades_a_legacy_v1_locations_table_in_place()
     {
