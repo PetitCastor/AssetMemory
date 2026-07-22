@@ -54,67 +54,71 @@
     else
     {
         <div class="toolbar">
-            <div class="filter-group">
-                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-                <select @bind="SelectedSystem" disabled="@Searching">
-                    <option value="">All systems</option>
-                    @foreach (var s in Systems)
-                    {
-                        <option value="@s">@s</option>
-                    }
-                </select>
-            </div>
-            <div class="filter-group">
-                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
-                <select @bind="SelectedPlace" disabled="@Searching">
-                    <option value="">All locations</option>
-                    @foreach (var p in Places)
-                    {
-                        <option value="@p.Id">@(p.Label ?? $"Location {p.Id}")</option>
-                    }
-                </select>
-            </div>
-            <label class="filter-group storage-toggle" title="@(HasStorage ? "Show items stored in SCU boxes" : "No SCU storage in this view")">
-                <input type="checkbox" @bind="ShowLocalStorages" disabled="@(Searching || !HasStorage)" />
-                <span>Show local storages</span>
-            </label>
-            @if (ShowLocalStorages && Containers.Count > 0)
-            {
+            <div class="toolbar-row">
                 <div class="filter-group">
-                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
-                    <select @bind="SelectedContainer" disabled="@Searching">
-                        <option value="">(local storage)</option>
-                        @foreach (var c in Containers)
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                    <select @bind="SelectedSystem" disabled="@Searching">
+                        <option value="">All systems</option>
+                        @foreach (var s in Systems)
                         {
-                            <option value="@c.Id">@(c.Label ?? $"Container {c.Id}")</option>
+                            <option value="@s">@s</option>
                         }
                     </select>
                 </div>
-            }
-            <div class="filter-group search">
-                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-                <input type="text" placeholder="Search items (everywhere)..." title="Search runs across every location, including SCU boxes and dropped items. Type % for any characters or _ for one, e.g. gun% for &quot;starts with&quot;" @bind="SearchTerm" @bind:event="oninput" />
-                @if (!string.IsNullOrEmpty(SearchTerm))
+                <div class="filter-group">
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                    <select @bind="SelectedPlace" disabled="@Searching">
+                        <option value="">All locations</option>
+                        @foreach (var p in Places)
+                        {
+                            <option value="@p.Id">@(p.Label ?? $"Location {p.Id}")</option>
+                        }
+                    </select>
+                </div>
+                <label class="filter-group storage-toggle" title="@(HasStorage ? "Show items stored in SCU boxes" : "No SCU storage in this view")">
+                    <input type="checkbox" @bind="ShowLocalStorages" disabled="@(Searching || !HasStorage)" />
+                    <span>Show local storages</span>
+                </label>
+                @if (ShowLocalStorages && Containers.Count > 0)
                 {
-                    <button class="clear-btn" @onclick="ClearSearch" title="Clear">&times;</button>
+                    <div class="filter-group">
+                        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+                        <select @bind="SelectedContainer" disabled="@Searching">
+                            <option value="">(local storage)</option>
+                            @foreach (var c in Containers)
+                            {
+                                <option value="@c.Id">@(c.Label ?? $"Container {c.Id}")</option>
+                            }
+                        </select>
+                    </div>
                 }
             </div>
-            @if (Searching)
-            {
-                <button class="btn-secondary btn-sm clear-search-btn" @onclick="ClearSearch" title="Clear the search and restore the filters">Clear search</button>
-            }
-            <div class="filter-group">
-                <span class="page-size-label">Per page</span>
-                <select @bind="PageSize">
-                    @foreach (var size in PageSizeOptions)
+            <div class="toolbar-row">
+                <div class="filter-group search">
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                    <input type="text" placeholder="Search items (everywhere)..." title="Search runs across every location, including SCU boxes and dropped items. Type % for any characters or _ for one, e.g. gun% for &quot;starts with&quot;" @bind="SearchTerm" @bind:event="oninput" />
+                    @if (!string.IsNullOrEmpty(SearchTerm))
                     {
-                        <option value="@size">@size</option>
+                        <button class="clear-btn" @onclick="ClearSearch" title="Clear">&times;</button>
                     }
-                </select>
+                </div>
+                @if (Searching)
+                {
+                    <button class="btn-secondary btn-sm clear-search-btn" @onclick="ClearSearch" title="Clear the search and restore the filters">Clear search</button>
+                }
+                <div class="filter-group">
+                    <span class="page-size-label">Per page</span>
+                    <select @bind="PageSize">
+                        @foreach (var size in PageSizeOptions)
+                        {
+                            <option value="@size">@size</option>
+                        }
+                    </select>
+                </div>
+                <button class="refresh-btn" @onclick="LoadData" title="Refresh">
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                </button>
             </div>
-            <button class="refresh-btn" @onclick="LoadData" title="Refresh">
-                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-            </button>
         </div>
 
         <div class="breadcrumb">
