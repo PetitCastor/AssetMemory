@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace AssetMemory.Core.Inventory.Events;
 
 /// <summary>Base type for a meaningful inventory event recovered from the game log.</summary>
@@ -43,7 +45,21 @@ public sealed record ItemsMovedBatchEvent(
     IReadOnlyList<string> ItemClasses,
     InventoryRef Source,
     InventoryRef Target,
-    int RequestId) : InventoryEvent(Timestamp);
+    int RequestId) : InventoryEvent(Timestamp)
+{
+    // The default record ToString renders IReadOnlyList as "System.String[]", which loses the moved
+    // classes from the audit table (whose raw is greppable by class_name). Spell the list out instead.
+    protected override bool PrintMembers(StringBuilder builder)
+    {
+        builder.Append("Timestamp = ").Append(Timestamp)
+            .Append(", Player = ").Append(Player)
+            .Append(", ItemClasses = [").Append(string.Join(", ", ItemClasses)).Append(']')
+            .Append(", Source = ").Append(Source)
+            .Append(", Target = ").Append(Target)
+            .Append(", RequestId = ").Append(RequestId);
+        return true;
+    }
+}
 
 /// <summary>
 /// An item was dropped out of an inventory into the physical world (e.g. onto the ground, a
