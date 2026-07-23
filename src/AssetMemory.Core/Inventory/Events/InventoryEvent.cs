@@ -62,6 +62,37 @@ public sealed record EquippedItemEvent(
     string Status) : InventoryEvent(Timestamp);
 
 /// <summary>
+/// An item was equipped straight onto a body port out of an inventory (a box, a station locker),
+/// which the game logs as <c>&lt;EquipItem&gt; equip from Inventory[ref] Class[class] Port[port]</c>.
+/// Unlike a locker-to-locker <see cref="ItemMovedEvent"/> this is a <c>Type[Interaction]</c>, so it
+/// is missed by <see cref="ItemMovedEvent"/>'s <c>Type[Move]</c> gate — yet the item genuinely leaves
+/// its source inventory. The applier debits one unit from <see cref="Source"/>; the equipped-loadout
+/// side is recorded separately by the <see cref="EquippedItemEvent"/> the paired
+/// <c>&lt;AttachmentReceived&gt;</c> line produces. Equipping attaches exactly one item to a port, so
+/// there is no quantity to carry.
+/// </summary>
+public sealed record ItemEquippedFromInventoryEvent(
+    DateTimeOffset Timestamp,
+    string ItemClass,
+    InventoryRef Source,
+    string Port,
+    int RequestId) : InventoryEvent(Timestamp);
+
+/// <summary>
+/// An item was stored straight into an inventory (a box, a backpack, a station locker) out of the
+/// player's hands or equipped loadout — the mirror of <see cref="ItemEquippedFromInventoryEvent"/>.
+/// The game logs a store as <c>Type[Store]</c>, not <c>Type[Move]</c>, so <see cref="ItemMovedEvent"/>'s
+/// gate misses it and the destination is never credited. The applier credits one unit to
+/// <see cref="Target"/>. Storing one entity is quantity 1; a stack stores as one such event per unit
+/// (each unit carries its own entity id on its own committed line).
+/// </summary>
+public sealed record ItemStoredEvent(
+    DateTimeOffset Timestamp,
+    string ItemClass,
+    InventoryRef Target,
+    int RequestId) : InventoryEvent(Timestamp);
+
+/// <summary>
 /// A station's persistent local inventory was opened, tying its numeric <see cref="PlaceId"/>
 /// (the 3rd field of a <c>GEID:Location:placeId</c> ref) to a readable <see cref="StationCode"/>
 /// (e.g. <c>Stanton4_NewBabbage</c>). Recovered by pairing a <c>RequestLocationInventory</c> line

@@ -324,6 +324,129 @@ public class EventApplierTests
     }
 
     [Fact]
+    public void EquipFromInventory_debits_the_item_out_of_the_source_box()
+    {
+        // The reported bug: equipping straight out of an SCU box left the item still shown in the box
+        // because nothing debited it. The equip event must remove one unit from the source container.
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            var applier = ApplierFor(store);
+            store.UpsertLocation(681562156430, T0, "Stor-All 2 SCU");
+            var item = store.EnsureItem("vgl_flightsuit_helmet_01_03_01", "Tailwind Flight Helmet Big Bite");
+            store.AdjustHolding(681562156430, item, 1, T0);
+
+            applier.Apply(new ItemEquippedFromInventoryEvent(
+                T0.AddSeconds(1),
+                ItemClass: "vgl_flightsuit_helmet_01_03_01",
+                Source: new InventoryRef(681562156430, InventoryKind.Container, 0, "681562156430:Container:0"),
+                Port: "Body_ItemPort:Armor_Undersuit:Armor_Helmet",
+                RequestId: 52));
+
+            Assert.Null(store.GetHolding(681562156430, item));  // debited to zero -> gone from the box
+        }
+    }
+
+    [Fact]
+    public void EquipFromInventory_decrements_only_one_unit_of_a_stack()
+    {
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            var applier = ApplierFor(store);
+            store.UpsertLocation(681562156430, T0, "Stor-All 2 SCU");
+            var item = store.EnsureItem("medpen", "Medpen");
+            store.AdjustHolding(681562156430, item, 3, T0);
+
+            applier.Apply(new ItemEquippedFromInventoryEvent(
+                T0.AddSeconds(1), "medpen",
+                new InventoryRef(681562156430, InventoryKind.Container, 0, "681562156430:Container:0"),
+                "Body_ItemPort", 1));
+
+            Assert.Equal(2, store.GetHolding(681562156430, item)!.Quantity);
+        }
+    }
+
+    [Fact]
+    public void Store_credits_the_item_into_the_destination_box()
+    {
+        // Mirror of the equip fix: unequipping/storing an item into a box must add one unit to it.
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            var applier = ApplierFor(store);
+            store.UpsertLocation(681562156430, T0, "Stor-All 2 SCU");
+
+            applier.Apply(new ItemStoredEvent(
+                T0.AddSeconds(1),
+                ItemClass: "qrt_utility_heavy_helmet_01_01_03",
+                Target: new InventoryRef(681562156430, InventoryKind.Container, 0, "681562156430:Container:0"),
+                RequestId: 43));
+
+            var item = store.GetItem("qrt_utility_heavy_helmet_01_01_03")!;
+            Assert.Equal(1, store.GetHolding(681562156430, item.Id)!.Quantity);
+        }
+    }
+
+    [Fact]
+    public void Store_ignores_a_client_only_destination_so_no_phantom_holding_is_minted()
+    {
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            ApplierFor(store).Apply(new ItemStoredEvent(
+                T0, "medpen",
+                new InventoryRef(204821708183, InventoryKind.ClientOnly, 1, "204821708183:ClientOnly:1"),
+                RequestId: 1));
+
+            var item = store.GetItem("medpen");
+            Assert.True(item is null || store.GetHolding(204821708183, item.Id) is null);
+        }
+    }
+
+    [Fact]
+    public void Equip_then_store_round_trips_the_box_holding_back_to_where_it_started()
+    {
+        // The two new events are inverses: a box holding one helmet, equipped out (-> 0, gone) then
+        // stored back in (-> 1) ends exactly where it began.
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            var applier = ApplierFor(store);
+            store.UpsertLocation(681562156430, T0, "Stor-All 2 SCU");
+            var item = store.EnsureItem("vgl_flightsuit_helmet_01_03_01", "Tailwind Flight Helmet Big Bite");
+            store.AdjustHolding(681562156430, item, 1, T0);
+            var box = new InventoryRef(681562156430, InventoryKind.Container, 0, "681562156430:Container:0");
+
+            applier.Apply(new ItemEquippedFromInventoryEvent(
+                T0.AddSeconds(1), "vgl_flightsuit_helmet_01_03_01", box, "Armor_Helmet", 52));
+            Assert.Null(store.GetHolding(681562156430, item));  // gone after equip
+
+            applier.Apply(new ItemStoredEvent(
+                T0.AddSeconds(2), "vgl_flightsuit_helmet_01_03_01", box, 60));
+            Assert.Equal(1, store.GetHolding(681562156430, item)!.Quantity);  // back after store
+        }
+    }
+
+    [Fact]
+    public void EquipFromInventory_ignores_a_client_only_source_so_no_phantom_holding_is_minted()
+    {
+        // Equipping from the personal pool (a ClientOnly ref) has no tracked holdings row; it must not
+        // create a bogus negative/phantom row on the player's own GEID.
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            ApplierFor(store).Apply(new ItemEquippedFromInventoryEvent(
+                T0, "medpen",
+                new InventoryRef(204821708183, InventoryKind.ClientOnly, 1, "204821708183:ClientOnly:1"),
+                "Body_ItemPort", 1));
+
+            var item = store.GetItem("medpen");
+            Assert.True(item is null || store.GetHolding(204821708183, item.Id) is null);
+        }
+    }
+
+    [Fact]
     public void ContainerClosed_updates_last_seen_on_existing_location()
     {
         var (store, conn) = TestStore.CreateMigrated();

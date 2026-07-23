@@ -122,11 +122,13 @@ public sealed class EventApplier
         switch (ev)
         {
             case ItemMovedEvent move: ApplyMove(move); break;
+            case ItemStoredEvent stored: ApplyStored(stored); break;
             case ItemDroppedEvent dropped: ApplyDropped(dropped); break;
             case FreightInventoryEvent freight: ApplyFreightInventory(freight); break;
             case FreightDescendedEvent descent: ApplyFreightDescended(descent); break;
             case PlayerLocationEvent loc: ApplyPlayerLocation(loc); break;
             case EquippedItemEvent eq: ApplyEquipped(eq); break;
+            case ItemEquippedFromInventoryEvent eqFrom: ApplyEquippedFromInventory(eqFrom); break;
             case ContainerOpenedEvent open: ApplyOpened(open); break;
             case ContainerClosedEvent close: ApplyClosed(close); break;
             case StationIdentifiedEvent station: ApplyStation(station); break;
@@ -237,6 +239,38 @@ public sealed class EventApplier
         _store.UpsertEquipped(
             eq.Player, eq.Port, itemId, eq.EntityId,
             eq.InstanceName, eq.Status, eq.Timestamp);
+    }
+
+    // The mirror of ApplyEquippedFromInventory: an item stored straight into a box/backpack/locker is
+    // credited to that destination — the move side a Type[Move] would book, which the game skips for a
+    // Type[Store] (see ItemStoredEvent). Only Container/Location destinations carry a holdings ledger;
+    // a client-only / personal-pool destination has no tracked row, so it is left alone.
+    private void ApplyStored(ItemStoredEvent stored)
+    {
+        if (stored.Target.Kind is not (InventoryKind.Container or InventoryKind.Location))
+            return;
+
+        var itemId = _store.EnsureItem(stored.ItemClass, _names.Resolve(stored.ItemClass));
+        var target = LocationKey(stored.Target);
+        _store.UpsertLocation(target, stored.Timestamp, label: null);
+        _store.AdjustHolding(target, itemId, +1, stored.Timestamp);
+    }
+
+    // Equipping an item straight out of a box/locker debits one unit from that source inventory — the
+    // move side a Type[Move] would normally book, which the game skips for an equip (see
+    // ItemEquippedFromInventoryEvent). The equipped-loadout side is booked by ApplyEquipped off the
+    // paired AttachmentReceived line. Only Container/Location sources carry a holdings ledger to debit;
+    // a client-only / personal-pool source has no tracked row, so it is left alone rather than minting
+    // a phantom negative holding.
+    private void ApplyEquippedFromInventory(ItemEquippedFromInventoryEvent eq)
+    {
+        if (eq.Source.Kind is not (InventoryKind.Container or InventoryKind.Location))
+            return;
+
+        var itemId = _store.EnsureItem(eq.ItemClass, _names.Resolve(eq.ItemClass));
+        var source = LocationKey(eq.Source);
+        _store.UpsertLocation(source, eq.Timestamp, label: null);
+        _store.AdjustHolding(source, itemId, -1, eq.Timestamp);
     }
 
     private void ApplyOpened(ContainerOpenedEvent open)

@@ -75,6 +75,41 @@ public class EventParserTests
         Assert.False(new MoveEventParser().TryParse(Entry(OpenLine), out _));
     }
 
+    // ---------- StoreEventParser ----------
+    // Storing an item into a box/backpack/locker is logged as Type[Store] (not Type[Move]), so
+    // MoveEventParser misses it. The committed Queued line names the destination but only the item's
+    // instance (class_entityId); the class is recovered by trimming the trailing entity id.
+
+    private const string StoreIntoBoxLine =
+        "<2026-07-23T11:14:26.503Z> [Notice] <InventoryManagementRequest> Queued Request[43] Type[Store] for 'Arcadiius' [204821708183] Source Inventory[INVALID] Target Inventory[681562156430:Container:0]. Source[NULL] amount[0] rank[]. Target[NULL] amount[0] rank[amqqzbttjgnmaam]. Item[qrt_utility_heavy_helmet_01_01_03_706759485595] action[None]. RequestInProgress[0] CurrentProcess[] [Team_CoreGameplayFeatures][Inventory]";
+
+    [Fact]
+    public void Store_parses_target_and_recovers_class_from_the_item_instance()
+    {
+        Assert.True(new StoreEventParser().TryParse(Entry(StoreIntoBoxLine), out var ev));
+        var stored = Assert.IsType<ItemStoredEvent>(ev);
+        Assert.Equal("qrt_utility_heavy_helmet_01_01_03", stored.ItemClass);  // entity id trimmed off
+        Assert.Equal(681562156430, stored.Target.Owner);
+        Assert.Equal(InventoryKind.Container, stored.Target.Kind);
+        Assert.Equal(43, stored.RequestId);
+    }
+
+    [Fact]
+    public void Store_ignores_a_move_queued_line()
+    {
+        // Type[Move] belongs to MoveEventParser; the store gate must not claim it.
+        Assert.False(new StoreEventParser().TryParse(Entry(MoveLine), out _));
+    }
+
+    [Fact]
+    public void Store_ignores_a_line_whose_item_is_not_an_instance()
+    {
+        // A store request that carries no concrete entity instance (Item[NONE]) has no class to book.
+        const string noItem =
+            "<2026-07-23T11:14:26.503Z> [Notice] <InventoryManagementRequest> Queued Request[43] Type[Store] for 'Arcadiius' [204821708183] Source Inventory[INVALID] Target Inventory[681562156430:Container:0]. Source[NULL] amount[0] rank[]. Target[NULL] amount[0] rank[]. Item[NONE] action[None]. [Team_CoreGameplayFeatures][Inventory]";
+        Assert.False(new StoreEventParser().TryParse(Entry(noItem), out _));
+    }
+
     // ---------- DropEventParser ----------
     // Dropping an item (e.g. onto the ground or a freight elevator platform) has no destination
     // inventory, and the game splits it across three lines whose Type tag drifts:
@@ -212,6 +247,42 @@ public class EventParserTests
         Assert.Equal(200000000217, eq.EntityId);
         Assert.Equal("Armor_Undersuit", eq.Port);
         Assert.Equal("persistent", eq.Status);
+    }
+
+    // ---------- EquipFromInventoryParser ----------
+    // Equipping straight out of a box logs a "<EquipItem> equip from Inventory[ref] Class[class]"
+    // line as a Type[Interaction] (not Type[Move]), so MoveEventParser never debits the box. This
+    // parser recovers the source + class off that single line so the box can be debited.
+
+    private const string EquipFromBoxLine =
+        "<2026-07-23T11:14:36.995Z> [Notice] <EquipItem> Request[52] equip from Inventory[681562156430:Container:0] Class[vgl_flightsuit_helmet_01_03_01] Rank[amqqzbttjgnmzzzzzzzn] Port[Body_ItemPort:Armor_Undersuit:Armor_Helmet] DependentRequest[4294967295] PostAction[None] [Team_CoreGameplayFeatures][Inventory]";
+
+    [Fact]
+    public void EquipFromInventory_parses_source_class_and_port()
+    {
+        Assert.True(new EquipFromInventoryParser().TryParse(Entry(EquipFromBoxLine), out var ev));
+        var eq = Assert.IsType<ItemEquippedFromInventoryEvent>(ev);
+        Assert.Equal("vgl_flightsuit_helmet_01_03_01", eq.ItemClass);
+        Assert.Equal(681562156430, eq.Source.Owner);
+        Assert.Equal(InventoryKind.Container, eq.Source.Kind);
+        Assert.Equal("Body_ItemPort:Armor_Undersuit:Armor_Helmet", eq.Port);
+        Assert.Equal(52, eq.RequestId);
+    }
+
+    [Fact]
+    public void EquipFromInventory_ignores_an_attachment_received_line()
+    {
+        // The paired loadout side (AttachmentReceived) belongs to EquippedItemParser, not this one.
+        const string attachment =
+            "<2026-07-23T11:14:37.379Z> [Notice] <AttachmentReceived> Player[Arcadiius] Attachment[vgl_flightsuit_helmet_01_03_01_713180782743, vgl_flightsuit_helmet_01_03_01, 713180782743] Status[persistent] Port[Armor_Helmet] Elapsed[0.384484] [Team_CoreGameplayFeatures][Inventory]";
+        Assert.False(new EquipFromInventoryParser().TryParse(Entry(attachment), out _));
+    }
+
+    [Fact]
+    public void Move_ignores_an_equip_item_line()
+    {
+        // Confirms the equip is not double-counted: MoveEventParser must not claim it either.
+        Assert.False(new MoveEventParser().TryParse(Entry(EquipFromBoxLine), out _));
     }
 
     // ---------- ContainerClosedParser ----------

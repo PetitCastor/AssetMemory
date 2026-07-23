@@ -245,6 +245,80 @@ public sealed class EquippedItemParser : IInventoryEventParser
     }
 }
 
+/// <summary>
+/// Parses a committed "&lt;InventoryManagementRequest&gt; Queued Request[N] Type[Store] … Target
+/// Inventory[ref] … Item[instanceName]" line: an item put straight into an inventory (a box, backpack
+/// or locker) out of the player's hands or loadout. A store is logged as <c>Type[Store]</c>, not
+/// <c>Type[Move]</c>, so <see cref="MoveEventParser"/> never credits the destination — the mirror of
+/// the equip gap <see cref="EquipFromInventoryParser"/> closes. The committed line names the destination
+/// but only the item's *instance* (<c>&lt;class&gt;_&lt;entityId&gt;</c>), so the class is recovered by
+/// trimming the trailing entity id. Read off the one committed line — no pairing — so it is immune to
+/// the interleaved request ids a bulk "store all" burst produces. Each stored entity is one line
+/// (a stack stores as one line per unit), so quantity is 1.
+/// </summary>
+public sealed partial class StoreEventParser : IInventoryEventParser
+{
+    // Item[<class>_<entityId>] -> the class is everything before the final "_<digits>" (the entity id).
+    [GeneratedRegex(@"^(.*)_\d+$", RegexOptions.Compiled)]
+    private static partial Regex InstanceClassRegex();
+
+    public bool TryParse(LogEntry entry, [NotNullWhen(true)] out InventoryEvent? ev)
+    {
+        ev = null;
+        if (entry.Category != "InventoryManagementRequest"
+            || !entry.Message.StartsWith("Queued Request", StringComparison.Ordinal)
+            || LogFields.Get(entry.Message, "Type") != "Store")
+            return false;
+
+        if (!InventoryRef.TryParse(LogFields.Get(entry.Message, "Target Inventory"), out var target))
+            return false;
+
+        var instance = LogFields.Get(entry.Message, "Item");
+        if (string.IsNullOrEmpty(instance))
+            return false;
+        var m = InstanceClassRegex().Match(instance);
+        if (!m.Success)
+            return false;
+
+        FieldHelpers.TryInt(LogFields.Get(entry.Message, "Request"), out var requestId);
+
+        ev = new ItemStoredEvent(entry.Timestamp, m.Groups[1].Value, target, requestId);
+        return true;
+    }
+}
+
+/// <summary>
+/// Parses a "&lt;EquipItem&gt; Request[N] equip from Inventory[ref] Class[class] … Port[port]" line:
+/// an item equipped directly onto a body port out of an inventory. The game logs this equip as a
+/// <c>Type[Interaction]</c> (never <c>Type[Move]</c>), so <see cref="MoveEventParser"/> never sees it
+/// and the item is never debited from the box/locker it came from — leaving it wrongly still shown
+/// there. This line carries the source inventory and item class in one place, so no pairing is needed.
+/// </summary>
+public sealed class EquipFromInventoryParser : IInventoryEventParser
+{
+    public bool TryParse(LogEntry entry, [NotNullWhen(true)] out InventoryEvent? ev)
+    {
+        ev = null;
+        if (entry.Category != "EquipItem")
+            return false;
+
+        var itemClass = LogFields.Get(entry.Message, "Class");
+        if (string.IsNullOrEmpty(itemClass))
+            return false;
+        if (!InventoryRef.TryParse(LogFields.Get(entry.Message, "Inventory"), out var source))
+            return false;
+        FieldHelpers.TryInt(LogFields.Get(entry.Message, "Request"), out var requestId);
+
+        ev = new ItemEquippedFromInventoryEvent(
+            entry.Timestamp,
+            itemClass,
+            source,
+            LogFields.Get(entry.Message, "Port") ?? "",
+            requestId);
+        return true;
+    }
+}
+
 /// <summary>Parses a "&lt;Remove Inventory Container UI&gt; … inventory [ref] removed from UI" line.</summary>
 public sealed partial class ContainerClosedParser : IInventoryEventParser
 {
