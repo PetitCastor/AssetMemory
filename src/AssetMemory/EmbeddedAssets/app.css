@@ -331,14 +331,35 @@ tbody tr:hover {
     color: var(--text-muted);
 }
 
-.status-bar {
+.app-footer {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    flex-wrap: wrap;
     gap: 0.75rem;
-    margin-top: 1rem;
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--border);
     font-size: 0.75rem;
     color: var(--text-hint);
+}
+
+.app-footer > .inception-bar {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
+}
+
+.app-footer-center {
+    display: flex;
+    justify-content: center;
+    flex: 1;
+    min-width: 0;
+}
+
+.app-footer-right {
+    flex-shrink: 0;
+    white-space: nowrap;
 }
 
 .status-left {
@@ -347,6 +368,16 @@ tbody tr:hover {
     gap: 0.5rem;
     min-width: 0;
     overflow: hidden;
+}
+
+.status-left > span:not(.status-path) {
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.status-sep {
+    opacity: 0.4;
+    flex-shrink: 0;
 }
 
 .status-dot {
@@ -365,6 +396,8 @@ tbody tr:hover {
 }
 
 .status-path {
+    flex: 1;
+    min-width: 40px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
