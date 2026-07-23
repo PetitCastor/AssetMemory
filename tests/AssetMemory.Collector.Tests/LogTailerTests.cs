@@ -148,6 +148,49 @@ public class LogTailerTests
     }
 
     [Fact]
+    public void Persisted_position_lets_a_fresh_tailer_resume_without_re_reading()
+    {
+        // The restart double-count fix: a new tailer instance (a process relaunch) restores the saved
+        // position instead of replaying the whole file from zero over an already-populated DB.
+        using var log = new TempLog();
+        log.Append("a", "b");
+        var statePath = Path.Combine(Path.GetTempPath(), $"assetmemory-pos-{Guid.NewGuid():N}.pos");
+        try
+        {
+            using (var first = new LogTailer(log.Path, statePath))
+                Assert.Equal(["a", "b"], first.ReadNew().ToList());  // reads and persists position
+
+            log.Append("c", "d");
+
+            using var restarted = new LogTailer(log.Path, statePath);
+            Assert.Equal(["c", "d"], restarted.ReadNew().ToList());  // resumes after a,b — no re-read
+        }
+        finally
+        {
+            File.Delete(statePath);
+        }
+    }
+
+    [Fact]
+    public void Persisted_position_for_a_different_file_is_ignored()
+    {
+        // A stale offset saved for another Game.log must not skip content in the current one.
+        using var log = new TempLog();
+        log.Append("a", "b", "c");
+        var statePath = Path.Combine(Path.GetTempPath(), $"assetmemory-pos-{Guid.NewGuid():N}.pos");
+        try
+        {
+            File.WriteAllText(statePath, "Z:\\some\\other\\Game.log\n999999");
+            using var tailer = new LogTailer(log.Path, statePath);
+            Assert.Equal(["a", "b", "c"], tailer.ReadNew().ToList());  // ignored → full read from zero
+        }
+        finally
+        {
+            File.Delete(statePath);
+        }
+    }
+
+    [Fact]
     public void Tailer_does_not_block_a_concurrent_writer()
     {
         using var log = new TempLog();

@@ -65,8 +65,10 @@ internal static class Program
 
         builder.Services.AddSingleton(settings);
 
-        // Collector pipeline — always registered; LogTailer gracefully no-ops when path is empty
-        builder.Services.AddSingleton(_ => new LogTailer(settings.GameLogPath ?? ""));
+        // Collector pipeline — always registered; LogTailer gracefully no-ops when path is empty. The
+        // state-file path lets the tailer persist its read position so a restart resumes instead of
+        // re-reading Game.log from the top (which additively double-counted already-applied holdings).
+        builder.Services.AddSingleton(_ => new LogTailer(settings.GameLogPath ?? "", AppPaths.TailerStatePath));
         // Real item display names come from the game's loose localization file (global.ini) next to
         // the configured Game.log; falls back to the heuristic formatter when it can't be found.
         builder.Services.AddSingleton<IItemNameResolver>(_ =>

@@ -20,6 +20,13 @@ public static class AppPaths
     public static string DbPath => Path.Combine(DataDir, "assetmemory.db");
 
     /// <summary>
+    /// Where <c>LogTailer</c> persists its read position so a restart resumes where it left off instead
+    /// of re-reading Game.log from the top (which additively double-counted every holding already applied
+    /// by the previous session).
+    /// </summary>
+    public static string TailerStatePath => Path.Combine(DataDir, "tailer.pos");
+
+    /// <summary>
     /// Ensures <see cref="DataDir"/> exists and, on the first run after the move, copies a legacy
     /// next-to-exe install's data in. Safe to call repeatedly.
     /// </summary>
