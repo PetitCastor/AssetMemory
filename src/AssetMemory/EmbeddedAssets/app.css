@@ -14,7 +14,6 @@
     --accent-hover: hsl(45 100% 45%);
     --accent-fg: hsl(220 10% 4%);
     --error: hsl(0 84% 60%);
-    --success: hsl(142 71% 45%);
     --radius: 0.25rem;
     --font-display: "Michroma", ui-sans-serif, system-ui, sans-serif;
     --font-body: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
@@ -64,7 +63,6 @@ body {
     margin-top: 0.5rem;
 }
 
-.header-status .inception-bar,
 .header-status .status-left,
 .header-status .path-editor {
     margin-top: 0;
@@ -140,6 +138,10 @@ body {
 
 .filter-group input {
     width: 100%;
+}
+
+.filter-group input[type="date"] {
+    color-scheme: dark;
 }
 
 /* "Show local storages" toggle sits in the toolbar like a filter-group but must not stretch its
@@ -381,21 +383,6 @@ tbody tr:hover {
     flex-shrink: 0;
 }
 
-.status-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    flex-shrink: 0;
-}
-
-.status-dot.active {
-    background: var(--success);
-}
-
-.status-dot.inactive {
-    background: var(--error);
-}
-
 .status-path {
     flex: 1;
     min-width: 40px;
@@ -411,45 +398,16 @@ tbody tr:hover {
     white-space: nowrap;
 }
 
-.inception-bar {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-    margin-top: 0.75rem;
-    padding-top: 0.75rem;
-    border-top: 1px solid var(--border);
-    font-size: 0.75rem;
-    color: var(--text-muted);
-}
-
-.inception-bar .icon {
-    width: 14px;
-    height: 14px;
-    flex-shrink: 0;
-}
-
-.inception-label {
-    white-space: nowrap;
-}
-
-.inception-sep {
-    color: var(--border);
-}
-
 .clear-warn {
     color: hsl(0 65% 62%);
     white-space: nowrap;
 }
 
-.inception-input {
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 0.2rem 0.4rem;
-    color: var(--text);
-    font-size: 0.75rem;
-    color-scheme: dark;
+.db-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
 }
 
 .inception-busy {
