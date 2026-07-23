@@ -75,6 +75,18 @@ public class EventParserTests
         Assert.False(new MoveEventParser().TryParse(Entry(OpenLine), out _));
     }
 
+    // The aggregate "Move all" click emits a bare Type[Move] with Source[NULL] amount[0] Item[NONE]
+    // ahead of the individual per-item moves. It carries no identity or quantity, so it must be rejected
+    // rather than mint a phantom "NULL" / zero-quantity move.
+    private const string MoveAllPlaceholderLine =
+        "<2026-07-23T16:05:17.413Z> [Notice] <InventoryManagementRequest> Queued Request[21] Type[Move] for 'Arcadiius' [204821708183] Source Inventory[735313847862:Container:0] Target Inventory[204821708183:Location:308639451]. Source[NULL] amount[0] rank[]. Target[NULL] amount[0] rank[]. Item[NONE] action[None]. RequestInProgress[0] CurrentProcess[] [Team_CoreGameplayFeatures][Inventory]";
+
+    [Fact]
+    public void Move_ignores_the_null_zero_move_all_placeholder_line()
+    {
+        Assert.False(new MoveEventParser().TryParse(Entry(MoveAllPlaceholderLine), out _));
+    }
+
     // ---------- StoreEventParser ----------
     // Storing an item into a box/backpack/locker is logged as Type[Store] (not Type[Move]), so
     // MoveEventParser misses it. The committed Queued line names the destination but only the item's
