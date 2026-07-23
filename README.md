@@ -20,7 +20,7 @@
 
 ## Download & run
 
-1. Unzip `AssetMemory-win-x64.zip` — one file, `AssetMemory.exe`.
+1. Grab `AssetMemory-win-x64.zip` from the [latest release](https://github.com/PetitCastor/AssetMemory/releases) (top of the list) and unzip it — one file, `AssetMemory.exe`.
 2. Run it. It starts in the system tray; right-click → **Open** (or double-click) for the UI.
 3. First run only: point it at your Star Citizen folder (auto-detect usually finds it).
 
