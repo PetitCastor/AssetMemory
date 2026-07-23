@@ -623,6 +623,93 @@ public class EventApplierTests
         }
     }
 
+    // ---------- worn backpack naming (the "Move all into a backpack" gap) ----------
+
+    [Fact]
+    public void Worn_backpack_is_named_from_the_loadout_and_move_all_into_it_nests_under_the_current_place()
+    {
+        // The reported gap: "Move all" into a worn backpack tracked the items, but under a Container GEID
+        // that was never OpenNestedInventory'd -- so it had no label/parent and the items orphaned out of
+        // view. Equipping the backpack now names that GEID, and the following move (once the station has
+        // been identified) anchors it under the current place, exactly like an SCU box.
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            var names = new ItemNameResolver(new Dictionary<string, string>
+            {
+                ["rrs_combat_heavy_backpack_01_01_10"] = "Morozov-CH Backpack Thule",
+                ["thp_light_helmet_01_01_01"] = "Aztalan Helmet",
+            });
+            var applier = ApplierFor(store, names);
+            const long backpack = 735313847862;
+            const long place = 308639451;
+
+            // Spawn loadout attaches the backpack BEFORE any station is identified (as in the real log).
+            applier.Apply(new EquippedItemEvent(
+                T0, "Arcadiius",
+                ItemClass: "rrs_combat_heavy_backpack_01_01_10",
+                InstanceName: "rrs_combat_heavy_backpack_01_01_10_735313847862",
+                EntityId: backpack,
+                Port: "backpack",
+                Status: "persistent"));
+            applier.Apply(new StationIdentifiedEvent(T0.AddSeconds(1), "Arcadiius", place, "RR_HUR_LEO"));
+            applier.Apply(new ItemMovedEvent(T0.AddSeconds(2),
+                "Arcadiius", "thp_light_helmet_01_01_01", 1,
+                new InventoryRef(204821708183, InventoryKind.Location, place, $"204821708183:Location:{place}"),
+                new InventoryRef(backpack, InventoryKind.Container, 0, $"{backpack}:Container:0"),
+                1));
+
+            // The backpack GEID is labelled from the loadout and nests under the station.
+            Assert.Equal("Morozov-CH Backpack Thule", store.GetLocation(backpack)!.Label);
+            Assert.Equal(backpack, Assert.Single(store.GetContainersForPlace(place)).Id);
+
+            // The moved item lands in the backpack and rolls up under the place + all-locations aggregate.
+            var item = store.GetItem("thp_light_helmet_01_01_01")!;
+            Assert.Equal(1, store.GetHolding(backpack, item.Id)!.Quantity);
+            Assert.Equal(1, store.GetHoldingDetailsPage(place, null, null, "item", true, 1, 50).TotalUnits);
+            Assert.Equal(1, store.GetHoldingDetailsPage(place, backpack, null, "item", true, 1, 50).TotalUnits);
+            Assert.Equal(1, store.GetHoldingDetailsPage(null, null, null, "item", true, 1, 50).TotalUnits);
+        }
+    }
+
+    [Fact]
+    public void Worn_backpack_with_no_known_place_is_still_named_as_a_top_level_row()
+    {
+        // Even if a place is never identified, the backpack is named off the loadout so its contents
+        // surface under a labelled row instead of a blank, unidentified one.
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            var names = new ItemNameResolver(new Dictionary<string, string>
+            {
+                ["rrs_combat_heavy_backpack_01_01_10"] = "Morozov-CH Backpack Thule",
+            });
+            const long backpack = 735313847862;
+
+            ApplierFor(store, names).Apply(new EquippedItemEvent(
+                T0, "Arcadiius", "rrs_combat_heavy_backpack_01_01_10",
+                "rrs_combat_heavy_backpack_01_01_10_735313847862", backpack, "backpack", "persistent"));
+
+            Assert.Equal("Morozov-CH Backpack Thule", store.GetLocation(backpack)!.Label);
+        }
+    }
+
+    [Fact]
+    public void Equipping_a_non_container_port_does_not_mint_a_location_row()
+    {
+        // Only the backpack port doubles as a tracked container; helmet / armor / weapon ports must not
+        // create a phantom location row keyed on their loadout EntityId.
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            ApplierFor(store).Apply(new EquippedItemEvent(
+                T0, "Arcadiius", "rsi_odyssey_undersuit_01_01_01",
+                "rsi_odyssey_undersuit_01_01_01_217", EntityId: 217, Port: "Armor_Undersuit", Status: "persistent"));
+
+            Assert.Null(store.GetLocation(217));
+        }
+    }
+
     [Fact]
     public void GridItemCount_is_ignored_without_error()
     {

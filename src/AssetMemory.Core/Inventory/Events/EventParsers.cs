@@ -66,10 +66,14 @@ public sealed class MoveEventParser : IInventoryEventParser
             || LogFields.Get(entry.Message, "Type") != "Move")
             return false;
 
+        // The aggregate "Move all" click logs a bare Type[Move] with Source[NULL] amount[0] Item[NONE]
+        // just before the individual per-item moves that each carry the real class and amount[1]. Reject
+        // that placeholder (and any non-positive quantity) so it can't mint a phantom "NULL" item or a
+        // zero-quantity move event.
         var itemClass = LogFields.Get(entry.Message, "Source");
-        if (string.IsNullOrEmpty(itemClass))
+        if (string.IsNullOrEmpty(itemClass) || itemClass == "NULL")
             return false;
-        if (!FieldHelpers.TryInt(LogFields.Get(entry.Message, "amount"), out var quantity))
+        if (!FieldHelpers.TryInt(LogFields.Get(entry.Message, "amount"), out var quantity) || quantity <= 0)
             return false;
         if (!InventoryRef.TryParse(LogFields.Get(entry.Message, "Source Inventory"), out var source))
             return false;

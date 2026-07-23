@@ -70,6 +70,18 @@ public sealed class EventApplier
     // logs ~10-15s after the drop in practice; 60s is comfortable slack.
     private static readonly TimeSpan FreightMergeWindow = TimeSpan.FromSeconds(60);
 
+    // The body port a worn backpack occupies. Its AttachmentReceived EntityId is the GEID the backpack's
+    // own contents key on, so this is the one loadout port that doubles as a tracked Container.
+    private const string BackpackPort = "backpack";
+
+    // Worn containers discovered from the loadout: GEID -> display label. A worn backpack is a Container
+    // in its own right (items "Move all"'d into it key on its GEID), but it is never OpenNestedInventory'd,
+    // so NestedContainerParser never names it -- its contents would otherwise orphan in an unlabelled,
+    // system-less row. We name it off the AttachmentReceived that equips it, then re-anchor it to the
+    // current place when items move in (the station is usually only identified after the spawn loadout).
+    // Transient session state, same self-correcting-on-replay contract as _lastKnownPlaceId.
+    private readonly Dictionary<long, string> _wornContainerLabels = [];
+
     // Drops awaiting a possible freight descent: each is credited to the Dropped bucket on arrival,
     // then moved onto the current station's inventory if a descent follows within FreightMergeWindow.
     private readonly List<(DateTimeOffset At, long ItemId, int Qty)> _pendingFreight = [];
@@ -80,6 +92,7 @@ public sealed class EventApplier
         _lastKnownPlaceId = null;
         _lastKnownSystem = null;
         _pendingFreight.Clear();
+        _wornContainerLabels.Clear();
     }
 
     /// <summary>
@@ -156,6 +169,12 @@ public sealed class EventApplier
 
         _store.UpsertLocation(source, move.Timestamp, label: null);
         _store.UpsertLocation(target, move.Timestamp, label: null);
+
+        // If either end is a worn backpack we named from the loadout, (re)anchor it to the current place
+        // now: the backpack is equipped at spawn, before the station is identified, so its first naming
+        // was usually a bare top-level row -- the move that follows is the moment a place is finally known.
+        AnchorWornContainer(source, move.Timestamp);
+        AnchorWornContainer(target, move.Timestamp);
 
         _store.AdjustHolding(source, itemId, -move.Quantity, move.Timestamp);
         _store.AdjustHolding(target, itemId, +move.Quantity, move.Timestamp);
@@ -239,6 +258,30 @@ public sealed class EventApplier
         _store.UpsertEquipped(
             eq.Player, eq.Port, itemId, eq.EntityId,
             eq.InstanceName, eq.Status, eq.Timestamp);
+
+        // A worn backpack is also a Container: its EntityId is the GEID its own contents key on. Remember
+        // it and give it a name off the item that filled the port, so a later "Move all" into it surfaces
+        // under a labelled row instead of vanishing into an unlabelled, system-less orphan.
+        if (eq.EntityId > 0 && string.Equals(eq.Port, BackpackPort, StringComparison.OrdinalIgnoreCase))
+        {
+            _wornContainerLabels[eq.EntityId] = _names.Resolve(eq.ItemClass);
+            AnchorWornContainer(eq.EntityId, eq.Timestamp);
+        }
+    }
+
+    // Names a known worn-container GEID and nests it under the player's current place when one is known,
+    // else leaves it a top-level labelled row tagged with the current system so its contents still surface.
+    // Both UpsertContainer and UpsertLocation COALESCE label + parent, so an earlier top-level naming
+    // self-heals to a nested one the first time a place is known (e.g. the move that follows the spawn
+    // loadout, once the station's Local Inventory has been opened). A no-op for any other GEID.
+    private void AnchorWornContainer(long geid, DateTimeOffset at)
+    {
+        if (!_wornContainerLabels.TryGetValue(geid, out var label))
+            return;
+        if (_lastKnownPlaceId is { } placeId)
+            _store.UpsertContainer(geid, placeId, at, label);
+        else
+            _store.UpsertLocation(geid, at, label, _lastKnownSystem);
     }
 
     // The mirror of ApplyEquippedFromInventory: an item stored straight into a box/backpack/locker is
@@ -253,6 +296,7 @@ public sealed class EventApplier
         var itemId = _store.EnsureItem(stored.ItemClass, _names.Resolve(stored.ItemClass));
         var target = LocationKey(stored.Target);
         _store.UpsertLocation(target, stored.Timestamp, label: null);
+        AnchorWornContainer(target, stored.Timestamp);
         _store.AdjustHolding(target, itemId, +1, stored.Timestamp);
     }
 
