@@ -623,6 +623,60 @@ public class EventApplierTests
         }
     }
 
+    // ---------- batched "Move all" (backpack/box -> station) ----------
+
+    [Fact]
+    public void MovedBatch_moves_every_listed_class_wholesale_from_source_to_target()
+    {
+        // A "Move all" empties each class out of the source, so the full known stack moves -- not 1.
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            var applier = ApplierFor(store);
+            const long backpack = 735313847862;
+            const long place = 308639451;
+            store.UpsertLocation(backpack, T0, "Backpack");
+            var medpen = store.EnsureItem("medpen", "Medpen");
+            var helmet = store.EnsureItem("vgl_flightsuit_helmet_01_03_01", "Tailwind Flight Helmet Big Bite");
+            store.AdjustHolding(backpack, medpen, 3, T0);   // a stack of 3
+            store.AdjustHolding(backpack, helmet, 1, T0);
+
+            applier.Apply(new StationIdentifiedEvent(T0, "Arcadiius", place, "RR_HUR_LEO"));
+            applier.Apply(new ItemsMovedBatchEvent(T0.AddSeconds(1), "Arcadiius",
+                ["medpen", "vgl_flightsuit_helmet_01_03_01"],
+                new InventoryRef(backpack, InventoryKind.Container, 0, $"{backpack}:Container:0"),
+                new InventoryRef(204821708183, InventoryKind.Location, place, $"204821708183:Location:{place}"),
+                RequestId: 8));
+
+            Assert.Null(store.GetHolding(backpack, medpen));                 // backpack emptied
+            Assert.Null(store.GetHolding(backpack, helmet));
+            Assert.Equal(3, store.GetHolding(place, medpen)!.Quantity);      // whole stack landed, not 1
+            Assert.Equal(1, store.GetHolding(place, helmet)!.Quantity);
+        }
+    }
+
+    [Fact]
+    public void MovedBatch_surfaces_one_unit_when_the_source_balance_was_never_tracked()
+    {
+        // The batch line proves the item left the source even if we never saw it arrive there; surface
+        // one unit at the destination rather than losing it.
+        var (store, conn) = TestStore.CreateMigrated();
+        using (conn)
+        {
+            var applier = ApplierFor(store);
+            const long place = 308639451;
+            applier.Apply(new StationIdentifiedEvent(T0, "Arcadiius", place, "RR_HUR_LEO"));
+            applier.Apply(new ItemsMovedBatchEvent(T0.AddSeconds(1), "Arcadiius",
+                ["never_seen_item"],
+                new InventoryRef(500, InventoryKind.Container, 0, "500:Container:0"),
+                new InventoryRef(204821708183, InventoryKind.Location, place, $"204821708183:Location:{place}"),
+                RequestId: 9));
+
+            var item = store.GetItem("never_seen_item")!;
+            Assert.Equal(1, store.GetHolding(place, item.Id)!.Quantity);
+        }
+    }
+
     // ---------- worn backpack naming (the "Move all into a backpack" gap) ----------
 
     [Fact]

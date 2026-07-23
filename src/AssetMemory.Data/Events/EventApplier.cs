@@ -135,6 +135,7 @@ public sealed class EventApplier
         switch (ev)
         {
             case ItemMovedEvent move: ApplyMove(move); break;
+            case ItemsMovedBatchEvent batch: ApplyMovedBatch(batch); break;
             case ItemStoredEvent stored: ApplyStored(stored); break;
             case ItemDroppedEvent dropped: ApplyDropped(dropped); break;
             case FreightInventoryEvent freight: ApplyFreightInventory(freight); break;
@@ -178,6 +179,32 @@ public sealed class EventApplier
 
         _store.AdjustHolding(source, itemId, -move.Quantity, move.Timestamp);
         _store.AdjustHolding(target, itemId, +move.Quantity, move.Timestamp);
+    }
+
+    // A bulk "Move all" the game logged only as a batched class list (see ItemsMovedBatchEvent): no
+    // per-item quantity is in the log, so each listed class moves WHOLESALE -- its full known balance at
+    // the source, since "move all" empties that class out of the source. When the source was never
+    // tracked (balance 0/unknown) the move line still proves the item left it, so surface one unit at the
+    // destination rather than nothing. Same source/target keying + worn-container anchoring as ApplyMove.
+    private void ApplyMovedBatch(ItemsMovedBatchEvent move)
+    {
+        var source = LocationKey(move.Source);
+        var target = LocationKey(move.Target);
+
+        _store.UpsertLocation(source, move.Timestamp, label: null);
+        _store.UpsertLocation(target, move.Timestamp, label: null);
+        AnchorWornContainer(source, move.Timestamp);
+        AnchorWornContainer(target, move.Timestamp);
+
+        foreach (var itemClass in move.ItemClasses)
+        {
+            var itemId = _store.EnsureItem(itemClass, _names.Resolve(itemClass));
+            var qty = _store.GetHolding(source, itemId)?.Quantity ?? 0;
+            if (qty <= 0)
+                qty = 1;
+            _store.AdjustHolding(source, itemId, -qty, move.Timestamp);
+            _store.AdjustHolding(target, itemId, +qty, move.Timestamp);
+        }
     }
 
     // A dropped item leaves its source inventory and becomes a loose world entity -- the log carries

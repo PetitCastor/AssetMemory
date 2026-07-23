@@ -87,6 +87,55 @@ public class EventParserTests
         Assert.False(new MoveEventParser().TryParse(Entry(MoveAllPlaceholderLine), out _));
     }
 
+    // ---------- BatchMoveEventParser ----------
+    // A backpack/box -> station "Move all" logs its items ONLY as a bracketed list on the batched
+    // "Add Inventory Management Move … Type[Move]" line; the paired Queued line is Source[NULL] amount[0]
+    // and there are no per-item Queued lines, so MoveEventParser misses it entirely. Real 2026-07-23 log.
+    private const string BatchMoveNewRequestLine =
+        "<2026-07-23T16:49:52.600Z> [Notice] <Add Inventory Management Move> New request[8] Player[Arcadiius] Type[Move] SourceInventory[735313847862:Container:0] TargetInventory[204821708183:Location:308639451] ItemClass[[crlf_medgun_01_msn_rwd02] [vgl_flightsuit_01_01_01] [vgl_flightsuit_helmet_01_03_01] [thp_light_core_01_01_01] [thp_light_legs_01_01_01] [thp_light_arms_01_01_01] [thp_light_helmet_01_01_01] ] StoredEntity[NULL] LocallyDetached[No] LocalAttached[NULL, ] PendingMoves[1, ] Caller[CSCLocalPlayerPersonalThoughtComponent::HandleComponentEvent] [Team_CoreGameplayFeatures][Inventory]";
+    private const string BatchMoveQueuedNullLine =
+        "<2026-07-23T16:49:52.602Z> [Notice] <InventoryManagementRequest> Queued Request[8] Type[Move] for 'Arcadiius' [204821708183] Source Inventory[735313847862:Container:0] Target Inventory[204821708183:Location:308639451]. Source[NULL] amount[0] rank[]. Target[NULL] amount[0] rank[]. Item[NONE] action[None]. RequestInProgress[0] CurrentProcess[] [Team_CoreGameplayFeatures][Inventory]";
+
+    [Fact]
+    public void BatchMove_stashes_the_class_list_then_emits_on_the_paired_null_queued_line()
+    {
+        var parser = new BatchMoveEventParser();
+        Assert.False(parser.TryParse(Entry(BatchMoveNewRequestLine), out _)); // stash only, no event yet
+        Assert.True(parser.TryParse(Entry(BatchMoveQueuedNullLine), out var ev));
+
+        var batch = Assert.IsType<ItemsMovedBatchEvent>(ev);
+        Assert.Equal(8, batch.RequestId);
+        Assert.Equal("Arcadiius", batch.Player);
+        Assert.Equal(735313847862, batch.Source.Owner);
+        Assert.Equal(InventoryKind.Container, batch.Source.Kind);
+        Assert.Equal(308639451, batch.Target.Id);
+        Assert.Equal(InventoryKind.Location, batch.Target.Kind);
+        Assert.Equal(
+            [
+                "crlf_medgun_01_msn_rwd02", "vgl_flightsuit_01_01_01", "vgl_flightsuit_helmet_01_03_01",
+                "thp_light_core_01_01_01", "thp_light_legs_01_01_01", "thp_light_arms_01_01_01",
+                "thp_light_helmet_01_01_01",
+            ],
+            batch.ItemClasses);
+    }
+
+    // Ordinary single-item drag: a bare "ItemClass[class]" New-request line (no bracketed list) plus a
+    // real per-item Queued line. The batch parser must NOT claim it -- MoveEventParser handles it.
+    private const string SingleDragNewRequestLine =
+        "<2026-06-24T19:23:30.685Z> [Notice] <Add Inventory Management Move> New request[26] Player[Arcadiius] Type[Move] SourceInventory[601563981557:Container:0] TargetInventory[595318982158:Container:0] ItemClass[Drink_bottle_synergy_01_plus_a] StoredEntity[NULL] LocallyDetached[No] LocalAttached[NULL, ] PendingMoves[1, ] Caller[X] [Team_CoreGameplayFeatures][Inventory]";
+
+    [Fact]
+    public void Reader_routes_a_move_all_to_one_batch_event_and_a_single_drag_to_one_move_event()
+    {
+        // Batch-only move-all -> exactly one ItemsMovedBatchEvent (no ItemMovedEvent, no double count).
+        var batchEvents = new InventoryLogReader().Read([BatchMoveNewRequestLine, BatchMoveQueuedNullLine]).ToList();
+        Assert.IsType<ItemsMovedBatchEvent>(Assert.Single(batchEvents));
+
+        // Single-item drag -> exactly one ItemMovedEvent; the bare New-request line yields no batch.
+        var dragEvents = new InventoryLogReader().Read([SingleDragNewRequestLine, MoveLine]).ToList();
+        Assert.IsType<ItemMovedEvent>(Assert.Single(dragEvents));
+    }
+
     // ---------- StoreEventParser ----------
     // Storing an item into a box/backpack/locker is logged as Type[Store] (not Type[Move]), so
     // MoveEventParser misses it. The committed Queued line names the destination but only the item's

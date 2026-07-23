@@ -28,6 +28,24 @@ public sealed record ItemMovedEvent(
     int RequestId) : InventoryEvent(Timestamp);
 
 /// <summary>
+/// A bulk "Move all" whose moved items the game logs ONLY as a bracketed list on a single
+/// <c>&lt;Add Inventory Management Move&gt; New request[N] Type[Move] … ItemClass[[c1] [c2] …]</c>
+/// line — the paired committed <c>Queued Request[N]</c> carries <c>Source[NULL] amount[0]</c> and there
+/// are no per-item <c>Queued</c> lines, so <see cref="ItemMovedEvent"/>'s per-item gate never sees the
+/// items. This is how a backpack/box → station (and station → box) "Move all" is logged. The applier
+/// moves each listed class wholesale (its full known balance at <see cref="Source"/>, falling back to 1
+/// when that source was never tracked) from <see cref="Source"/> to <see cref="Target"/>. Quantity is
+/// not in the log, so a stack whose source balance is unknown is surfaced as a single unit.
+/// </summary>
+public sealed record ItemsMovedBatchEvent(
+    DateTimeOffset Timestamp,
+    string Player,
+    IReadOnlyList<string> ItemClasses,
+    InventoryRef Source,
+    InventoryRef Target,
+    int RequestId) : InventoryEvent(Timestamp);
+
+/// <summary>
 /// An item was dropped out of an inventory into the physical world (e.g. onto the ground, a
 /// freight elevator platform, or anywhere else with no inventory of its own) rather than moved to
 /// another inventory. The game logs this as <c>Type[Drop]</c> with <c>TargetInventory[INVALID]</c>,

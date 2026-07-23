@@ -28,6 +28,11 @@ public sealed class InventoryEventParser
         new NestedContainerParser(),
         new ContainerOpenedParser(),
         new MoveEventParser(),
+        // Must follow MoveEventParser: it claims a bulk "Move all" whose items live only in the batched
+        // "Add Inventory Management Move … ItemClass[[c1] [c2] …]" line (paired Queued line is NULL), which
+        // MoveEventParser's per-item gate skips. On an ordinary per-item Queued line MoveEventParser runs
+        // first and wins, so this never double-counts.
+        new BatchMoveEventParser(),
         new StoreEventParser(),
         new DropEventParser(),
         new GridItemCountParser(),
