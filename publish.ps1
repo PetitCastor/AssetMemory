@@ -1,7 +1,8 @@
 # Builds the self-contained, zero-install Windows distributable and zips it for sharing.
 #
-#   ./publish.ps1        -> dist/AssetMemory-win-x64.zip
-#   ./publish.ps1 -NoZip -> publish folder only, no archive
+#   ./publish.ps1                              -> dist/AssetMemory-win-x64.zip
+#   ./publish.ps1 -NoZip                       -> publish folder only, no archive
+#   ./publish.ps1 -VersionSuffix "alpha.7"     -> stamps Version = 0.1.0-alpha.7 (CI use)
 #
 # AssetMemory.exe is a tray app + Blazor UI on http://localhost:9222. Self-contained (no .NET
 # runtime needed on the target) and a genuine single-file exe -- every static asset (CSS, the
@@ -15,7 +16,8 @@
 # the new path.
 
 param(
-    [switch]$NoZip
+    [switch]$NoZip,
+    [string]$VersionSuffix
 )
 
 $ErrorActionPreference = 'Stop'
@@ -26,7 +28,9 @@ $publishDir = Join-Path $project 'bin\Release\net10.0-windows\win-x64\publish'
 
 Write-Host "Publishing self-contained win-x64 build..." -ForegroundColor Cyan
 if (Test-Path $publishDir) { Remove-Item -Recurse -Force $publishDir }
-dotnet publish $project -c Release
+$publishArgs = @('publish', $project, '-c', 'Release')
+if ($VersionSuffix) { $publishArgs += "-p:VersionSuffix=$VersionSuffix" }
+dotnet @publishArgs
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed (exit $LASTEXITCODE)" }
 
 $exe = Join-Path $publishDir 'AssetMemory.exe'
