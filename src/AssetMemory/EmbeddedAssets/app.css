@@ -432,6 +432,15 @@ tbody tr:hover {
     white-space: nowrap;
 }
 
+.inception-sep {
+    color: var(--border);
+}
+
+.clear-warn {
+    color: hsl(0 65% 62%);
+    white-space: nowrap;
+}
+
 .inception-input {
     background: var(--bg);
     border: 1px solid var(--border);
@@ -566,6 +575,27 @@ tbody tr:hover {
 
 .btn-secondary:hover {
     border-color: var(--text-muted);
+}
+
+.btn-danger {
+    background: none;
+    color: hsl(0 65% 62%);
+    border: 1px solid hsl(0 45% 30%);
+    border-radius: var(--radius);
+    padding: 0.5rem 1.25rem;
+    font-size: 0.8125rem;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.btn-danger:hover {
+    border-color: hsl(0 65% 55%);
+    background: hsl(0 55% 12%);
+}
+
+.btn-danger:disabled {
+    opacity: 0.4;
+    cursor: default;
 }
 
 .btn-sm {
