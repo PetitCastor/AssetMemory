@@ -450,7 +450,13 @@ public sealed class AssetMemoryStore
         // hide-storage filter entirely, so an item is found wherever it lives -- a station locker, an SCU
         // box, or the Dropped bucket. With no term, scope precedence applies (container > place > system),
         // and unless storage is shown (or a box is explicitly selected) container rows are excluded so the
-        // list holds only place-direct holdings (station lockers + Dropped).
+        // list holds only place-direct holdings (station lockers).
+        //
+        // The "Dropped" bucket (EventApplier.DroppedBucketId = -1, system "Dropped") is a synthetic
+        // top-level location for items dropped in the world with no freight descent -- not somewhere the
+        // player actively stored things. It would otherwise headline the default all-systems view (it is
+        // place-direct, so the hide-storage filter never touches it), so it is kept out unless its own
+        // "Dropped" system is explicitly selected. Search stays global (the $term branch above).
         const string filterSql = """
             FROM holdings h
             JOIN items i ON i.id = h.item_id
@@ -464,6 +470,7 @@ public sealed class AssetMemoryStore
                    AND ($container IS NOT NULL OR $place IS NOT NULL OR $system IS NULL
                         OR COALESCE(l.system, p.system, 'Other') = $system)
                    AND ($includeStorage = 1 OR $container IS NOT NULL OR l.parent_id IS NULL)
+                   AND ($system = 'Dropped' OR h.location_id <> -1)
                   ))
               AND ($term IS NULL OR i.display_name LIKE $term OR i.class_name LIKE $term)
             """;
