@@ -1,6 +1,6 @@
 <img src="src/AssetMemory/Resources/app-icon.ico" width="96" alt="AssetMemory icon" />
 
-# AssetMemory
+# Asset Memory
 
 **Every station. Every scu box. Remembered.** — a local inventory tracker for Star Citizen. It watches your `Game.log` in the background and remembers where every item ended up, so you stop opening forty-seven containers across three systems looking for one (1) bottle of Synergy.
 
