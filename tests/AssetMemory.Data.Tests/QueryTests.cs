@@ -225,6 +225,59 @@ public class QueryTests
         }
     }
 
+    // ---------- Dropped bucket visibility ----------
+
+    private static (AssetMemoryStore store, Microsoft.Data.Sqlite.SqliteConnection conn) SeededWithDropped()
+    {
+        var (store, conn) = TestStore.CreateMigrated();
+        store.UpsertLocation(100, T0, "Everus Harbor", "Stanton");  // a real station, place-direct
+        store.UpsertLocation(-1, T0, "Dropped", "Dropped");         // the synthetic Dropped bucket
+        var locker = store.EnsureItem("medpen_tier1", "MedPen");
+        var battery = store.EnsureItem("lmg_battery", "Demeco LMG Battery");
+        store.AdjustHolding(100, locker, 2, T0);
+        store.AdjustHolding(-1, battery, 3, T0);
+        return (store, conn);
+    }
+
+    [Fact]
+    public void GetHoldingDetailsPage_default_view_excludes_the_Dropped_bucket()
+    {
+        // With nothing selected the Dropped bucket must not headline the view; only the station locker shows.
+        var (store, conn) = SeededWithDropped();
+        using (conn)
+        {
+            var page = store.GetHoldingDetailsPage(null, null, null, "location", true, 1, 50);
+            Assert.DoesNotContain(page.Rows, r => r.LocationId == -1);
+            Assert.Equal("Everus Harbor", Assert.Single(page.Rows).LocationLabel);
+            Assert.Equal(2, page.TotalUnits);        // the locker's 2, not the dropped 3
+            Assert.Equal(1, page.DistinctLocations);
+        }
+    }
+
+    [Fact]
+    public void GetHoldingDetailsPage_shows_the_Dropped_bucket_when_its_system_is_selected()
+    {
+        var (store, conn) = SeededWithDropped();
+        using (conn)
+        {
+            var page = store.GetHoldingDetailsPage(null, null, null, "location", true, 1, 50, system: "Dropped");
+            Assert.Equal(-1, Assert.Single(page.Rows).LocationId);
+            Assert.Equal(3, page.TotalUnits);
+        }
+    }
+
+    [Fact]
+    public void GetHoldingDetailsPage_search_still_finds_Dropped_items_globally()
+    {
+        // Search bypasses scope entirely, so a dropped item is still findable by name.
+        var (store, conn) = SeededWithDropped();
+        using (conn)
+        {
+            var page = store.GetHoldingDetailsPage(null, null, "demeco", "location", true, 1, 50);
+            Assert.Equal(-1, Assert.Single(page.Rows).LocationId);
+        }
+    }
+
     [Fact]
     public void GetHoldingDetailsPage_page_past_the_end_returns_no_rows_but_correct_totals()
     {
