@@ -15,7 +15,7 @@ A local inventory tracker for Star Citizen. It watches your `Game.log` in the ba
 
 ## How it tracks your inventory
 
-AssetMemory tails `Game.log` the same way the game itself writes to it — live, in the background. Every item move, equip, and container open/close the log records gets parsed into a typed event and applied to a local SQLite database.
+AssetMemory tails `Game.log` the same way the game itself writes to it — live, in the background. Every item move, equip, drop, and container open/close the log records gets parsed into a typed event and applied to a local SQLite database. That includes the actions the log disguises as something other than a plain move: equipping an item straight out of a storage box (or off a station locker) and storing one straight back in are tracked too, so a box's contents stay correct whether you drag items in and out or equip and stow them directly.
 
 That database is a **discovery ledger**, not a snapshot: locations and quantities are derived purely from what the log has revealed, event by event. Nothing is guessed. If you've never opened a container, AssetMemory doesn't know it exists; the moment you do, it starts tracking everything that happens to it. Containers (Stor-All boxes, etc.) nest under the station or place they physically sit at, so moving an item into a box doesn't make it disappear from view — it just shows up one level deeper.
 
@@ -25,7 +25,7 @@ Numeric location/player/entity IDs from the log get resolved into readable names
 
 By default AssetMemory ingests your entire log history, including rotated backup logs, from the very first session it can find. If you'd rather it only remember what happens from a certain point forward, set a **"track from"** date in the UI: everything before that date is dropped, and the database is rebuilt from the remaining events.
 
-That bound persists across restarts — set it once and every future sync (manual or automatic) respects it. Change your mind later and hit **"Ingest all"** to go back to full history; either action triggers a full rebuild from the log, so it fully replaces the tracked data rather than merging two views of it.
+That bound persists across restarts — set it once and every future sync (manual or automatic) respects it. Change your mind later and hit **"Ingest all"** to go back to full history; either action triggers a full rebuild from the log, so it fully replaces the tracked data rather than merging two views of it. A rebuild replays your logs — rotated backups and the current one — in chronological order, so an item you took out of a box in a later session doesn't get resurrected by an older backup that still remembers it there.
 
 ## The star-citizen.wiki hook
 
