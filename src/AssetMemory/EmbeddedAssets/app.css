@@ -60,6 +60,22 @@ body {
     color: var(--text-muted);
 }
 
+.header-status {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    margin-top: 0.5rem;
+}
+
+.header-status .inception-bar,
+.header-status .status-left,
+.header-status .path-editor {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
+    margin-bottom: 0;
+}
+
 .toolbar {
     display: flex;
     flex-direction: column;
@@ -344,22 +360,10 @@ tbody tr:hover {
     color: var(--text-hint);
 }
 
-.app-footer > .inception-bar {
-    margin-top: 0;
-    padding-top: 0;
-    border-top: none;
-}
-
-.app-footer-center {
-    display: flex;
-    justify-content: center;
-    flex: 1;
-    min-width: 0;
-}
-
 .app-footer-right {
     flex-shrink: 0;
     white-space: nowrap;
+    margin-left: auto;
 }
 
 .status-left {
