@@ -94,6 +94,104 @@ public sealed class MoveEventParser : IInventoryEventParser
 }
 
 /// <summary>
+/// Stateful: recognises a bulk "Move all" whose items the game logs ONLY as a bracketed list on a
+/// single <c>&lt;Add Inventory Management Move&gt; New request[N] Type[Move] … ItemClass[[c1] [c2] …]</c>
+/// line. The paired committed <c>&lt;InventoryManagementRequest&gt; Queued Request[N] Type[Move]</c>
+/// carries <c>Source[NULL] amount[0]</c> and there are NO per-item <c>Queued</c> lines, so
+/// <see cref="MoveEventParser"/> (which reads a per-item <c>Source[class] amount[n]</c> off each Queued
+/// line) captures nothing — this is how a backpack/box → station "Move all" is logged, and why it went
+/// untracked. Two lines sharing one request id:
+/// <list type="number">
+/// <item>the <c>New request</c> line stashes the class list + source/target (no event yet);</item>
+/// <item>the paired <c>Queued</c> line, once confirmed to carry no per-item class (<c>Source</c> NULL or
+/// empty), emits a single <see cref="ItemsMovedBatchEvent"/> for the whole list.</item>
+/// </list>
+/// If that Queued line instead carries a real <c>Source[class]</c> — an ordinary single-item drag, which
+/// also emits a bare <c>ItemClass[class]</c> New-request line — <see cref="MoveEventParser"/> runs first
+/// and claims it, so this parser is never reached and the stale stash is dropped by the next request (or
+/// the pairing window). Lines are processed in log order on one thread; register AFTER MoveEventParser.
+/// </summary>
+public sealed partial class BatchMoveEventParser : IInventoryEventParser
+{
+    private static readonly TimeSpan PairWindow = TimeSpan.FromSeconds(5);
+
+    // The ItemClass field nests a bracketed list ("ItemClass[[c1] [c2] …] StoredEntity[…]"), so the outer
+    // value cannot be read with the flat Key[value] LogFields helper; capture everything up to the next
+    // "] StoredEntity", then pull each "[class]" token out of it.
+    [GeneratedRegex(@"ItemClass\[(.*?)\]\s*StoredEntity", RegexOptions.Compiled)]
+    private static partial Regex ItemClassListRegex();
+
+    [GeneratedRegex(@"\[([A-Za-z][A-Za-z0-9_]*)\]", RegexOptions.Compiled)]
+    private static partial Regex ClassTokenRegex();
+
+    private int _pendingRequestId;
+    private string[]? _pendingClasses;
+    private InventoryRef _pendingSource;
+    private InventoryRef _pendingTarget;
+    private string? _pendingPlayer;
+    private DateTimeOffset _pendingAt;
+
+    public bool TryParse(LogEntry entry, [NotNullWhen(true)] out InventoryEvent? ev)
+    {
+        ev = null;
+
+        // (1) the batch "New request … Type[Move]" line: stash the class list.
+        if (entry.Category == "Add Inventory Management Move"
+            && entry.Message.StartsWith("New request", StringComparison.Ordinal)
+            && LogFields.Get(entry.Message, "Type") == "Move")
+        {
+            var listMatch = ItemClassListRegex().Match(entry.Message);
+            if (listMatch.Success
+                && FieldHelpers.TryInt(LogFields.Get(entry.Message, "request"), out var reqId)
+                && InventoryRef.TryParse(LogFields.Get(entry.Message, "SourceInventory"), out var source)
+                && InventoryRef.TryParse(LogFields.Get(entry.Message, "TargetInventory"), out var target))
+            {
+                var tokens = ClassTokenRegex().Matches(listMatch.Groups[1].Value);
+                if (tokens.Count > 0)
+                {
+                    var classes = new string[tokens.Count];
+                    for (var i = 0; i < tokens.Count; i++)
+                        classes[i] = tokens[i].Groups[1].Value;
+
+                    _pendingRequestId = reqId;
+                    _pendingClasses = classes;
+                    _pendingSource = source;
+                    _pendingTarget = target;
+                    _pendingPlayer = LogFields.Get(entry.Message, "Player");
+                    _pendingAt = entry.Timestamp;
+                }
+            }
+            return false; // list stashed; the event comes on the paired Queued line.
+        }
+
+        // (2) the paired committed Queued line — only when it carries no per-item class of its own.
+        if (_pendingClasses is not null
+            && entry.Category == "InventoryManagementRequest"
+            && entry.Message.StartsWith("Queued Request", StringComparison.Ordinal)
+            && LogFields.Get(entry.Message, "Type") == "Move"
+            && FieldHelpers.TryInt(LogFields.Get(entry.Message, "Request"), out var queuedId)
+            && queuedId == _pendingRequestId
+            && entry.Timestamp - _pendingAt <= PairWindow)
+        {
+            var src = LogFields.Get(entry.Message, "Source");
+            if (string.IsNullOrEmpty(src) || src == "NULL")
+            {
+                ev = new ItemsMovedBatchEvent(
+                    entry.Timestamp, _pendingPlayer ?? "", _pendingClasses,
+                    _pendingSource, _pendingTarget, _pendingRequestId);
+                _pendingClasses = null;
+                return true;
+            }
+
+            // A real class means this is an ordinary per-item move (already handled); drop the stash.
+            _pendingClasses = null;
+        }
+
+        return false;
+    }
+}
+
+/// <summary>
 /// Stateful: recognises an item dropped out of an inventory into the physical world (onto the
 /// ground, a freight elevator platform, etc.) rather than moved to another inventory. The game
 /// splits this across three lines with a drifting <c>Type</c> tag, all sharing one request id:
